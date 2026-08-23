@@ -6,7 +6,8 @@ from datetime import datetime, timedelta, timezone
 
 from spotipy import Spotify
 
-from core.cancellation import CancelCheck, check_cancelled
+from core.cancellation import CancelCheck
+import playlists.playlist_cache as playlist_cache_module
 
 ADD_BATCH_SIZE = 100
 
@@ -51,42 +52,6 @@ def _parse_year(release_date: str | None) -> int | None:
         return int(release_date[:4])
     except ValueError:
         return None
-
-
-def get_playlist_tracks(
-    sp: Spotify,
-    playlist_id: str,
-    playlist_name: str,
-    cancel_check: CancelCheck | None = None,
-) -> list[dict]:
-    tracks: list[dict] = []
-    results = sp.playlist_items(
-        playlist_id,
-        fields=(
-            "items(added_at,track(uri,name,artists,explicit,popularity,is_local,"
-            "album(release_date))),next"
-        ),
-        additional_types=["track"],
-    )
-    while results:
-        for item in results["items"]:
-            track = item.get("track")
-            if track and track.get("uri") and not track.get("is_local"):
-                tracks.append(
-                    {
-                        "uri": track["uri"],
-                        "name": track["name"],
-                        "artists": ", ".join(a["name"] for a in track["artists"]),
-                        "explicit": bool(track.get("explicit")),
-                        "popularity": track.get("popularity"),
-                        "release_year": _parse_year((track.get("album") or {}).get("release_date")),
-                        "added_at": item.get("added_at"),
-                    }
-                )
-        logger.info("playlist '%s': %d tracks fetched so far", playlist_name, len(tracks))
-        check_cancelled(cancel_check)
-        results = sp.next(results) if results.get("next") else None
-    return tracks
 
 
 def matches_criterion(
@@ -177,36 +142,23 @@ def find_matches_from_tracks(
 
 def find_matches(
     sp: Spotify,
-    source_playlists: list[dict],
+    source_playlist_ids: list[str],
     criteria: list[dict],
     cancel_check: CancelCheck | None = None,
 ) -> list[dict]:
-    """source_playlists: [{"id": ..., "name": ...}, ...]"""
-    fetched = []
-    for playlist in source_playlists:
-        logger.info("fetching playlist '%s'", playlist["name"])
-        tracks = get_playlist_tracks(sp, playlist["id"], playlist["name"], cancel_check)
-        check_cancelled(cancel_check)
-        fetched.append({"id": playlist["id"], "name": playlist["name"], "tracks": tracks})
-
+    playlists = playlist_cache_module.get_playlists(sp, source_playlist_ids, cancel_check)
+    fetched = [
+        {"id": pid, "name": playlists[pid]["name"], "tracks": playlists[pid]["tracks"]}
+        for pid in source_playlist_ids
+    ]
     return find_matches_from_tracks(fetched, criteria)
 
 
 def get_playlist_track_uris(
     sp: Spotify, playlist_id: str, cancel_check: CancelCheck | None = None
 ) -> set[str]:
-    uris: set[str] = set()
-    results = sp.playlist_items(
-        playlist_id, fields="items(track(uri)),next", additional_types=["track"]
-    )
-    while results:
-        for item in results["items"]:
-            track = item.get("track")
-            if track and track.get("uri"):
-                uris.add(track["uri"])
-        check_cancelled(cancel_check)
-        results = sp.next(results) if results.get("next") else None
-    return uris
+    tracks = playlist_cache_module.get_playlist(sp, playlist_id, cancel_check)["tracks"]
+    return {t["uri"] for t in tracks}
 
 
 def exclude_existing(matches: list[dict], existing_uris: set[str]) -> list[dict]:
@@ -216,27 +168,10 @@ def exclude_existing(matches: list[dict], existing_uris: set[str]) -> list[dict]
 def get_playlist_track_details(
     sp: Spotify, playlist_id: str, cancel_check: CancelCheck | None = None
 ) -> list[dict]:
-    """Like get_playlist_track_uris but also fetches name/artists, for the
-    "check for similar versions" comparison - one extra field, no extra
-    request, since we're already paging through the whole playlist."""
-    tracks: list[dict] = []
-    results = sp.playlist_items(
-        playlist_id, fields="items(track(uri,name,artists)),next", additional_types=["track"]
-    )
-    while results:
-        for item in results["items"]:
-            track = item.get("track")
-            if track and track.get("uri"):
-                tracks.append(
-                    {
-                        "uri": track["uri"],
-                        "name": track["name"],
-                        "artists": ", ".join(a["name"] for a in track["artists"]),
-                    }
-                )
-        check_cancelled(cancel_check)
-        results = sp.next(results) if results.get("next") else None
-    return tracks
+    """Like get_playlist_track_uris but also returns name/artists, for the
+    "check for similar versions" comparison."""
+    tracks = playlist_cache_module.get_playlist(sp, playlist_id, cancel_check)["tracks"]
+    return [{"uri": t["uri"], "name": t["name"], "artists": t["artists"]} for t in tracks]
 
 
 def _normalize_title(title: str) -> str:
@@ -288,11 +223,24 @@ def _chunks(items: list, size: int):
 
 
 def add_new_tracks_to_playlist(
-    sp: Spotify, playlist_id: str, uris: list[str], existing_uris
+    sp: Spotify,
+    playlist_id: str,
+    uris: list[str],
+    existing_uris,
+    track_details: list[dict] | None = None,
 ) -> tuple[int, int]:
-    """Adds uris not already in existing_uris. Returns (added, skipped)."""
+    """Adds uris not already in existing_uris. Returns (added, skipped).
+
+    track_details, when the caller already has full track dicts for the
+    uris being added (e.g. cascade, which keeps them in its own playlist
+    cache), avoids an extra Spotify lookup when refreshing the on-disk
+    cache afterwards."""
     to_add = [uri for uri in uris if uri not in existing_uris]
     skipped = len(uris) - len(to_add)
+
+    current_tracks = (
+        playlist_cache_module.get_playlist(sp, playlist_id)["tracks"] if to_add else None
+    )
 
     batches = list(_chunks(to_add, ADD_BATCH_SIZE))
     for i, batch in enumerate(batches, start=1):
@@ -305,6 +253,48 @@ def add_new_tracks_to_playlist(
             len(batches),
         )
         sp.playlist_add_items(playlist_id, batch)
+
+    if to_add:
+        # The add itself already succeeded above; nothing from here on
+        # should turn into an exception that makes it look like it failed.
+        # Worst case some housekeeping step doesn't complete and the cache
+        # stays stale until it self-heals on the next read (snapshot_id
+        # won't match) or a later invalidate call.
+        try:
+            details_by_uri = (
+                {t["uri"]: t for t in track_details}
+                if track_details is not None
+                else playlist_cache_module.track_details_for_uris(sp, to_add)
+            )
+            unresolved = set(to_add) - details_by_uri.keys()
+            if unresolved:
+                # Can't build a complete post-add track list, so don't cache
+                # an undercount with false confidence - invalidate instead
+                # and let the next read do a full, honest re-fetch.
+                logger.warning(
+                    "playlist %s: couldn't resolve metadata for %d added track(s), "
+                    "invalidating cache instead of saving an incomplete one: %s",
+                    playlist_id,
+                    len(unresolved),
+                    ", ".join(sorted(unresolved)),
+                )
+                playlist_cache_module.invalidate(playlist_id)
+            else:
+                current_uris = {t["uri"] for t in current_tracks}
+                new_tracks = [
+                    details_by_uri[uri] for uri in to_add if uri not in current_uris
+                ]
+                playlist_cache_module.refresh_after_mutation(
+                    sp, playlist_id, current_tracks + new_tracks
+                )
+        except Exception:
+            logger.warning(
+                "playlist %s: %d track(s) added, but refreshing the cache afterwards "
+                "failed - it'll self-correct on the next read",
+                playlist_id,
+                len(to_add),
+                exc_info=True,
+            )
 
     return len(to_add), skipped
 

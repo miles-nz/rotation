@@ -13,6 +13,7 @@ from spotify.spotify_client import make_oauth, get_authenticated_client
 from core.sync import apply_diff, get_target_diff
 import playlists.cascade as cascade_module
 import playlists.duplicates as duplicates_module
+import playlists.playlist_cache as playlist_cache_module
 import playlists.playlist_filter as playlist_filter_module
 import playlists.playlist_cleanup as playlist_cleanup_module
 import playlists.playlist_diff as playlist_diff_module
@@ -142,11 +143,7 @@ def _run_sync_diff(playlist_id_1: str, playlist_id_2: str):
 def _run_duplicate_scan(playlist_ids: list[str]):
     def target(cancel_check):
         sp = get_authenticated_client()
-        playlists = [
-            {"id": pid, "name": sp.playlist(pid, fields="name")["name"]}
-            for pid in playlist_ids
-        ]
-        return duplicates_module.find_duplicates(sp, playlists, cancel_check=cancel_check)
+        return duplicates_module.find_duplicates(sp, playlist_ids, cancel_check=cancel_check)
 
     return target
 
@@ -158,12 +155,8 @@ def _run_playlist_filter_scan(
 ):
     def target(cancel_check):
         sp = get_authenticated_client()
-        playlists = [
-            {"id": pid, "name": sp.playlist(pid, fields="name")["name"]}
-            for pid in playlist_ids
-        ]
         matches = playlist_filter_module.find_matches(
-            sp, playlists, criteria, cancel_check=cancel_check
+            sp, playlist_ids, criteria, cancel_check=cancel_check
         )
 
         already_in_destination = 0
@@ -198,13 +191,13 @@ def _run_playlist_cleanup_scan(
 ):
     def target(cancel_check):
         sp = get_authenticated_client()
-        playlist_name = sp.playlist(playlist_id, fields="name")["name"]
-        removals = playlist_cleanup_module.find_removals(
-            sp, playlist_id, playlist_name, field, operator, value, value2, cancel_check=cancel_check
+        playlist = playlist_cache_module.get_playlist(sp, playlist_id, cancel_check)
+        removals = playlist_cleanup_module.find_removals_from_tracks(
+            playlist["name"], playlist["tracks"], field, operator, value, value2
         )
         return {
             "playlist_id": playlist_id,
-            "playlist_name": playlist_name,
+            "playlist_name": playlist["name"],
             "removals": removals,
         }
 
@@ -214,18 +207,9 @@ def _run_playlist_cleanup_scan(
 def _run_playlist_diff_scan(source_ids: list[str], target_ids: list[str]):
     def target(cancel_check):
         sp = get_authenticated_client()
-        sources = [
-            {"id": pid, "name": sp.playlist(pid, fields="name")["name"]}
-            for pid in source_ids
-        ]
-        targets = [
-            {"id": pid, "name": sp.playlist(pid, fields="name")["name"]}
-            for pid in target_ids
-        ]
-        missing = playlist_diff_module.find_missing(
-            sp, sources, targets, cancel_check=cancel_check
+        return playlist_diff_module.find_missing(
+            sp, source_ids, target_ids, cancel_check=cancel_check
         )
-        return {"missing": missing, "targets": targets}
 
     return target
 

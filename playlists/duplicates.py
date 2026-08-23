@@ -4,41 +4,12 @@ import logging
 
 from spotipy import Spotify
 
-from core.cancellation import CancelCheck, check_cancelled
+from core.cancellation import CancelCheck
+import playlists.playlist_cache as playlist_cache_module
 
 REMOVE_BATCH_SIZE = 100
 
 logger = logging.getLogger(__name__)
-
-
-def get_playlist_tracks(
-    sp: Spotify,
-    playlist_id: str,
-    playlist_name: str,
-    cancel_check: CancelCheck | None = None,
-) -> list[dict]:
-    tracks: list[dict] = []
-    results = sp.playlist_items(
-        playlist_id,
-        fields="items(added_at,track(uri,name,artists,is_local)),next",
-        additional_types=["track"],
-    )
-    while results:
-        for item in results["items"]:
-            track = item.get("track")
-            if track and track.get("uri") and not track.get("is_local"):
-                tracks.append(
-                    {
-                        "uri": track["uri"],
-                        "name": track["name"],
-                        "artists": ", ".join(a["name"] for a in track["artists"]),
-                        "added_at": item.get("added_at"),
-                    }
-                )
-        logger.info("playlist '%s': %d tracks fetched so far", playlist_name, len(tracks))
-        check_cancelled(cancel_check)
-        results = sp.next(results) if results.get("next") else None
-    return tracks
 
 
 def find_duplicates_from_tracks(playlists: list[dict]) -> list[dict]:
@@ -85,16 +56,13 @@ def find_duplicates_from_tracks(playlists: list[dict]) -> list[dict]:
 
 
 def find_duplicates(
-    sp: Spotify, playlists: list[dict], cancel_check: CancelCheck | None = None
+    sp: Spotify, playlist_ids: list[str], cancel_check: CancelCheck | None = None
 ) -> list[dict]:
-    """playlists: [{"id": ..., "name": ...}, ...]"""
-    fetched = []
-    for playlist in playlists:
-        logger.info("fetching playlist '%s'", playlist["name"])
-        tracks = get_playlist_tracks(sp, playlist["id"], playlist["name"], cancel_check)
-        check_cancelled(cancel_check)
-        fetched.append({"id": playlist["id"], "name": playlist["name"], "tracks": tracks})
-
+    playlists = playlist_cache_module.get_playlists(sp, playlist_ids, cancel_check)
+    fetched = [
+        {"id": pid, "name": playlists[pid]["name"], "tracks": playlists[pid]["tracks"]}
+        for pid in playlist_ids
+    ]
     return find_duplicates_from_tracks(fetched)
 
 
@@ -110,6 +78,8 @@ def remove_from_playlists(sp: Spotify, removals: list[dict]) -> None:
         by_playlist.setdefault(removal["playlist_id"], []).append(removal["uri"])
 
     for playlist_id, uris in by_playlist.items():
+        current_tracks = playlist_cache_module.get_playlist(sp, playlist_id)["tracks"]
+
         batches = list(_chunks(uris, REMOVE_BATCH_SIZE))
         for i, batch in enumerate(batches, start=1):
             logger.info(
@@ -121,3 +91,19 @@ def remove_from_playlists(sp: Spotify, removals: list[dict]) -> None:
                 len(batches),
             )
             sp.playlist_remove_all_occurrences_of_items(playlist_id, batch)
+
+        removed_uris = set(uris)
+        updated_tracks = [t for t in current_tracks if t["uri"] not in removed_uris]
+        try:
+            playlist_cache_module.refresh_after_mutation(sp, playlist_id, updated_tracks)
+        except Exception:
+            # The removal itself already succeeded; don't let a failure in
+            # this housekeeping call make it look like the whole operation
+            # failed. Worst case the cache stays stale until it self-heals
+            # on the next read (snapshot_id won't match).
+            logger.warning(
+                "playlist %s: track(s) removed, but refreshing the cache afterwards "
+                "failed - it'll self-correct on the next read",
+                playlist_id,
+                exc_info=True,
+            )

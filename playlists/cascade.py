@@ -156,10 +156,11 @@ def apply_step(sp: Spotify, cache: PlaylistCache, step: dict, result: Any, form)
             playlist_name = result["destination_playlist_name"]
 
         existing_uris = {t["uri"] for t in cache.playlist(playlist_id)["tracks"]}
+        track_details = _lookup_tracks(cache, step["playlist_ids"], selected_uris)
         added, skipped = playlist_filter_module.add_new_tracks_to_playlist(
-            sp, playlist_id, selected_uris, existing_uris
+            sp, playlist_id, selected_uris, existing_uris, track_details=track_details
         )
-        cache.add_tracks(playlist_id, _lookup_tracks(cache, step["playlist_ids"], selected_uris))
+        cache.add_tracks(playlist_id, track_details)
         return {
             "type": step_type,
             "label": label,
@@ -191,10 +192,11 @@ def apply_step(sp: Spotify, cache: PlaylistCache, step: dict, result: Any, form)
 
         def _add_tracks(playlist_id, uris):
             existing_uris = {t["uri"] for t in cache.playlist(playlist_id)["tracks"]}
+            track_details = _lookup_tracks(cache, step["source_ids"], uris)
             added, skipped = playlist_filter_module.add_new_tracks_to_playlist(
-                sp, playlist_id, uris, existing_uris
+                sp, playlist_id, uris, existing_uris, track_details=track_details
             )
-            cache.add_tracks(playlist_id, _lookup_tracks(cache, step["source_ids"], uris))
+            cache.add_tracks(playlist_id, track_details)
             return added, skipped
 
         added_counts = playlist_diff_module.add_to_playlists(sp, additions, add_tracks=_add_tracks)

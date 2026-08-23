@@ -4,40 +4,11 @@ import logging
 
 from spotipy import Spotify
 
-from core.cancellation import CancelCheck, check_cancelled
+from core.cancellation import CancelCheck
+import playlists.playlist_cache as playlist_cache_module
 import playlists.playlist_filter as playlist_filter
 
 logger = logging.getLogger(__name__)
-
-
-def get_playlist_tracks(
-    sp: Spotify,
-    playlist_id: str,
-    cancel_check: CancelCheck | None = None,
-) -> list[dict]:
-    """Returns [{"uri", "name", "artists", "album"}, ...] for a playlist,
-    skipping local files."""
-    tracks: list[dict] = []
-    results = sp.playlist_items(
-        playlist_id,
-        fields="items(track(uri,name,artists,album(name),is_local)),next",
-        additional_types=["track"],
-    )
-    while results:
-        for item in results["items"]:
-            track = item.get("track")
-            if track and track.get("uri") and not track.get("is_local"):
-                tracks.append(
-                    {
-                        "uri": track["uri"],
-                        "name": track["name"],
-                        "artists": ", ".join(a["name"] for a in track["artists"]),
-                        "album": (track.get("album") or {}).get("name") or "",
-                    }
-                )
-        check_cancelled(cancel_check)
-        results = sp.next(results) if results.get("next") else None
-    return tracks
 
 
 def _signature(track: dict) -> tuple[str, str, str]:
@@ -90,22 +61,26 @@ def find_missing_from_tracks(
 
 def find_missing(
     sp: Spotify,
-    source_playlists: list[dict],
-    target_playlists: list[dict],
+    source_ids: list[str],
+    target_ids: list[str],
     cancel_check: CancelCheck | None = None,
-) -> list[dict]:
-    """source_playlists / target_playlists: [{"id": ..., "name": ...}, ...]"""
+) -> dict:
+    """Returns {"missing": [...], "targets": [{"id", "name"}, ...]} - targets
+    carries resolved names so callers can label playlists in the "add"
+    step without a further lookup."""
+    all_ids = list(dict.fromkeys(list(source_ids) + list(target_ids)))
+    playlists = playlist_cache_module.get_playlists(sp, all_ids, cancel_check)
 
-    def fetch(playlists):
-        fetched = []
-        for playlist in playlists:
-            logger.info("fetching playlist '%s'", playlist["name"])
-            tracks = get_playlist_tracks(sp, playlist["id"], cancel_check)
-            check_cancelled(cancel_check)
-            fetched.append({"id": playlist["id"], "name": playlist["name"], "tracks": tracks})
-        return fetched
+    def build(playlist_ids):
+        return [
+            {"id": pid, "name": playlists[pid]["name"], "tracks": playlists[pid]["tracks"]}
+            for pid in playlist_ids
+        ]
 
-    return find_missing_from_tracks(fetch(source_playlists), fetch(target_playlists))
+    sources = build(source_ids)
+    targets = build(target_ids)
+    missing = find_missing_from_tracks(sources, targets)
+    return {"missing": missing, "targets": [{"id": t["id"], "name": t["name"]} for t in targets]}
 
 
 def add_to_playlists(sp: Spotify, additions: list[dict], add_tracks=None) -> dict[str, int]:
