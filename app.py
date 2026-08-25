@@ -17,6 +17,7 @@ import playlists.playlist_cache as playlist_cache_module
 import playlists.playlist_filter as playlist_filter_module
 import playlists.playlist_cleanup as playlist_cleanup_module
 import playlists.playlist_diff as playlist_diff_module
+import playlists.playlist_prepend as playlist_prepend_module
 
 load_dotenv()
 
@@ -51,6 +52,7 @@ DEFAULT_PREFERENCES = {
     "playlist_filter": _parse_json_env("DEFAULT_PLAYLIST_FILTER"),
     "playlist_cleanup": _parse_json_env("DEFAULT_PLAYLIST_CLEANUP"),
     "playlist_diff": _parse_json_env("DEFAULT_PLAYLIST_DIFF"),
+    "playlist_prepend": _parse_json_env("DEFAULT_PLAYLIST_PREPEND"),
     "cascade": _parse_json_env("DEFAULT_CASCADE"),
 }
 
@@ -106,6 +108,7 @@ _dup_job = BackgroundJob(["playlists.duplicates", "app"])
 _filter_job = BackgroundJob(["playlists.playlist_filter", "app"])
 _cleanup_job = BackgroundJob(["playlists.playlist_cleanup", "app"])
 _diff_job = BackgroundJob(["playlists.playlist_diff", "app"])
+_prepend_job = BackgroundJob(["playlists.playlist_prepend", "app"])
 _cascade_job = BackgroundJob(["playlists.playlist_cache", "app"])
 _cascade_run: cascade_module.CascadeRun | None = None
 
@@ -209,6 +212,16 @@ def _run_playlist_diff_scan(source_ids: list[str], target_ids: list[str]):
         sp = get_authenticated_client()
         return playlist_diff_module.find_missing(
             sp, source_ids, target_ids, cancel_check=cancel_check
+        )
+
+    return target
+
+
+def _run_playlist_prepend_scan(source_id: str, destination_id: str):
+    def target(cancel_check):
+        sp = get_authenticated_client()
+        return playlist_prepend_module.find_prependable(
+            sp, source_id, destination_id, cancel_check=cancel_check
         )
 
     return target
@@ -966,6 +979,111 @@ def playlist_diff_add():
     _diff_job.result = None
 
     return render_template("playlist_diff_done.html", added_summary=added_summary)
+
+
+# --- Playlist Prepend -----------------------------------------------------
+
+
+@app.route("/playlist-prepend")
+def playlist_prepend_picker():
+    if not _credentials_configured():
+        return render_template("playlist_prepend.html", needs_credentials=True)
+
+    sp = get_authenticated_client()
+    return render_template(
+        "playlist_prepend.html",
+        needs_credentials=False,
+        logged_in=sp is not None,
+        default_prefs=_default_preferences("playlist_prepend", sp),
+    )
+
+
+@app.route("/playlist-prepend/scan")
+def playlist_prepend_scan():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    source_id = request.args.get("source_id")
+    destination_id = request.args.get("destination_id")
+    if not source_id or not destination_id or source_id == destination_id:
+        return redirect(url_for("playlist_prepend_picker"))
+
+    _prepend_job.start(_run_playlist_prepend_scan(source_id, destination_id))
+
+    return render_template(
+        "progress.html",
+        status_url=url_for("playlist_prepend_scan_status"),
+        cancel_url=url_for("playlist_prepend_scan_cancel"),
+        result_url=url_for("playlist_prepend_scan_result"),
+        back_url=url_for("playlist_prepend_picker"),
+        heading="Scanning playlists…",
+        description="Reading both playlists to see which tracks would be new. This can take a few minutes for large libraries.",
+    )
+
+
+@app.route("/playlist-prepend/scan/status")
+def playlist_prepend_scan_status():
+    return jsonify(_prepend_job.status())
+
+
+@app.route("/playlist-prepend/scan/cancel", methods=["POST"])
+def playlist_prepend_scan_cancel():
+    _prepend_job.cancel()
+    return jsonify({"ok": True})
+
+
+@app.route("/playlist-prepend/scan/result")
+def playlist_prepend_scan_result():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    result = _prepend_job.result
+    if result is None:
+        return redirect(url_for("playlist_prepend_picker"))
+
+    return render_template(
+        "playlist_prepend_result.html",
+        to_add=result["to_add"],
+        duplicates=result["duplicates"],
+        source_name=result["source_name"],
+        destination_name=result["destination_name"],
+    )
+
+
+@app.route("/playlist-prepend/add", methods=["POST"])
+def playlist_prepend_add():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    result = _prepend_job.result
+    if result is None:
+        return redirect(url_for("playlist_prepend_picker"))
+
+    to_add_by_uri = {t["uri"]: t for t in result["to_add"]}
+    selected_uris = [uri for uri in request.form.getlist("track") if uri in to_add_by_uri]
+    track_details = [to_add_by_uri[uri] for uri in selected_uris]
+
+    added = playlist_prepend_module.prepend_tracks_to_playlist(
+        sp, result["destination_id"], selected_uris, track_details
+    )
+    destination_name = result["destination_name"]
+    _prepend_job.result = None
+
+    return render_template(
+        "playlist_prepend_done.html", added=added, destination_name=destination_name
+    )
 
 
 # --- Cascade ---------------------------------------------------------

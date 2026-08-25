@@ -6,6 +6,8 @@ from dotenv import load_dotenv
 from spotipy import Spotify
 from spotipy.oauth2 import SpotifyOAuth
 
+from core.paths import DATA_DIR
+
 load_dotenv()
 
 SCOPES = " ".join(
@@ -19,7 +21,7 @@ SCOPES = " ".join(
     ]
 )
 
-CACHE_PATH = ".cache"
+CACHE_PATH = str(DATA_DIR / ".cache")
 
 
 def _client_id() -> str:

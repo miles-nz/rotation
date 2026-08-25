@@ -31,7 +31,7 @@ def find_missing_from_tracks(
     Returns tracks present in the source playlists but absent from every
     target playlist - by uri, or by matching artist/album/title (so a
     different version of a track already in the target isn't treated as
-    missing) - deduped by uri, sorted by artist/name:
+    missing) - deduped by uri, in reverse source playlist order:
     [{"uri", "name", "artists", "album"}]
     """
     seen: dict[str, dict] = {}
@@ -48,10 +48,9 @@ def find_missing_from_tracks(
 
     missing = [
         t
-        for uri, t in seen.items()
+        for uri, t in reversed(seen.items())
         if uri not in target_uris and _signature(t) not in target_signatures
     ]
-    missing.sort(key=lambda t: (t["artists"].lower(), t["name"].lower()))
     logger.info(
         "found %d track(s) in source playlist(s) missing from target playlist(s)",
         len(missing),

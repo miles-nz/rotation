@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+{% block title %}Playlist Prepend - Rotation{% endblock %}
+{% block content %}
+<h1>Playlist Prepend</h1>
+<p>
+    Add every track from one playlist to the top of another, in order,
+    skipping any that are already there.
+</p>
+
+{% if needs_credentials %}
+<p class="warning">
+    No Spotify credentials found. Copy <code>.env.example</code> to
+    <code>.env</code> and fill in <code>SPOTIFY_CLIENT_ID</code> and
+    <code>SPOTIFY_CLIENT_SECRET</code>, then restart the app. See the README for
+    how to register a Spotify app.
+</p>
+{% elif not logged_in %}
+<p><a class="button" href="{{ url_for('login') }}">Log in with Spotify</a></p>
+{% else %}
+<div id="configured-view" style="display: none">
+    <p id="configured-source"></p>
+    <p id="configured-destination"></p>
+    <p>
+        <a class="button" id="scan-link" href="#">Preview</a>
+        <button class="button secondary" id="edit-btn" type="button">
+            Edit
+        </button>
+    </p>
+</div>
+
+<div id="picker-view" style="display: none">
+    <fieldset>
+        <legend>Prepend tracks from</legend>
+        <div class="combo" id="source-combo">
+            <input
+                type="text"
+                id="source-combo-input"
+                class="combo-input"
+                placeholder="Search your playlists…"
+                autocomplete="off"
+            />
+            <div class="combo-panel" id="source-combo-panel"></div>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Onto the top of</legend>
+        <div class="combo" id="destination-combo">
+            <input
+                type="text"
+                id="destination-combo-input"
+                class="combo-input"
+                placeholder="Search your playlists…"
+                autocomplete="off"
+            />
+            <div class="combo-panel" id="destination-combo-panel"></div>
+        </div>
+    </fieldset>
+
+    <p id="picker-loading"><span class="spinner"></span>Loading playlists…</p>
+    <p class="warning" id="picker-error" style="display: none"></p>
+    <p>
+        <button class="button" id="save-btn" type="button">Save</button>
+        <button
+            class="button secondary"
+            id="cancel-btn"
+            type="button"
+            style="display: none"
+        >
+            Cancel
+        </button>
+    </p>
+</div>
+
+<script src="{{ url_for('static', filename='playlist_picker.js') }}"></script>
+<script>
+    let currentSaved = {{ default_prefs | tojson }};
+
+    function getSaved() {
+        return currentSaved && currentSaved.sourceId && currentSaved.destinationId
+            ? currentSaved
+            : null;
+    }
+
+    function showConfigured(saved) {
+        document.getElementById("picker-view").style.display = "none";
+        document.getElementById("configured-view").style.display = "block";
+
+        document.getElementById("configured-source").textContent =
+            "Source: " + saved.sourceName;
+        document.getElementById("configured-destination").textContent =
+            "Destination: " + saved.destinationName;
+
+        const params = new URLSearchParams();
+        params.set("source_id", saved.sourceId);
+        params.set("destination_id", saved.destinationId);
+        document.getElementById("scan-link").href =
+            "{{ url_for('playlist_prepend_scan') }}?" + params.toString();
+    }
+
+    let sourceCombo = null;
+    let destinationCombo = null;
+
+    async function showPicker(saved) {
+        document.getElementById("configured-view").style.display = "none";
+        document.getElementById("picker-view").style.display = "block";
+        document.getElementById("picker-error").style.display = "none";
+        document.getElementById("cancel-btn").style.display = saved
+            ? "inline-block"
+            : "none";
+
+        document.getElementById("picker-loading").style.display = "block";
+        document.getElementById("save-btn").disabled = true;
+
+        const errorEl = document.getElementById("picker-error");
+        try {
+            await fetchPlaylists(
+                "{{ url_for('api_playlists') }}",
+                "{{ url_for('login') }}",
+            );
+        } catch (e) {
+            document.getElementById("picker-loading").style.display = "none";
+            errorEl.textContent =
+                "Failed to load your playlists. Check your connection and try again.";
+            errorEl.style.display = "block";
+            return;
+        }
+        document.getElementById("picker-loading").style.display = "none";
+        document.getElementById("save-btn").disabled = false;
+
+        const sourceInitial = saved
+            ? { id: saved.sourceId, name: saved.sourceName }
+            : null;
+        sourceCombo = setupCombo(
+            document.getElementById("source-combo-input"),
+            document.getElementById("source-combo-panel"),
+            sourceInitial,
+        );
+
+        const destinationInitial = saved
+            ? { id: saved.destinationId, name: saved.destinationName }
+            : null;
+        destinationCombo = setupCombo(
+            document.getElementById("destination-combo-input"),
+            document.getElementById("destination-combo-panel"),
+            destinationInitial,
+        );
+    }
+
+    document
+        .getElementById("edit-btn")
+        .addEventListener("click", () => showPicker(getSaved()));
+
+    document.getElementById("cancel-btn").addEventListener("click", () => {
+        const saved = getSaved();
+        if (saved) showConfigured(saved);
+    });
+
+    document.getElementById("save-btn").addEventListener("click", () => {
+        const errorEl = document.getElementById("picker-error");
+        const source = sourceCombo.getValue();
+        const destination = destinationCombo.getValue();
+
+        if (!source.id) {
+            errorEl.textContent = "Pick a source playlist.";
+            errorEl.style.display = "block";
+            return;
+        }
+        if (!destination.id) {
+            errorEl.textContent = "Pick a destination playlist.";
+            errorEl.style.display = "block";
+            return;
+        }
+        if (source.id === destination.id) {
+            errorEl.textContent =
+                "Source and destination must be different playlists.";
+            errorEl.style.display = "block";
+            return;
+        }
+
+        errorEl.style.display = "none";
+
+        const saved = {
+            sourceId: source.id,
+            sourceName: source.name,
+            destinationId: destination.id,
+            destinationName: destination.name,
+        };
+        currentSaved = saved;
+        showConfigured(saved);
+    });
+
+    const saved = getSaved();
+    if (saved) {
+        showConfigured(saved);
+    } else {
+        showPicker(null);
+    }
+</script>
+{% endif %} {% endblock %}

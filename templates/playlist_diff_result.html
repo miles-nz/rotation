@@ -61,7 +61,9 @@ background: var(--bg); } .diff-target { display: flex; align-items: center; gap:
     </div>
     {% endfor %}
     <p style="margin-top: 1.5rem">
-        <button class="button" type="submit">Add selected</button>
+        <button class="button" type="submit" id="diff-submit">
+            Continue without adding
+        </button>
         <a
             class="button secondary"
             href="{{ cancel_url or url_for('playlist_diff_picker') }}"
@@ -69,4 +71,18 @@ background: var(--bg); } .diff-target { display: flex; align-items: center; gap:
         >
     </p>
 </form>
+<script>
+    (function () {
+        const submitButton = document.getElementById("diff-submit");
+        const checkboxes = document.querySelectorAll('input[name="add"]');
+        function updateLabel() {
+            const anyChecked = Array.from(checkboxes).some((c) => c.checked);
+            submitButton.textContent = anyChecked
+                ? "Add selected"
+                : "Continue without adding";
+        }
+        checkboxes.forEach((c) => c.addEventListener("change", updateLabel));
+        updateLabel();
+    })();
+</script>
 {% endif %} {% endblock %}

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Prepend Preview - Rotation{% endblock %}
+{% block content %}
+<h1>Prepend Preview</h1>
+
+{% if not to_add %}
+<p class="hint">
+    {% if duplicates %}
+    Every track in "{{ source_name }}" is already in "{{ destination_name }}"
+    ({{ duplicates|length }} skipped as duplicate{{ 's' if duplicates|length != 1 else '' }}) - nothing to add.
+    {% else %}
+    "{{ source_name }}" has no tracks to add.
+    {% endif %}
+</p>
+<p><a class="button" href="{{ url_for('playlist_prepend_picker') }}">Back</a></p>
+{% else %}
+<p>
+    {{ to_add|length }} track{{ 's' if to_add|length != 1 else '' }} from
+    "{{ source_name }}" will be added to the top of "{{ destination_name }}",
+    in this order{% if duplicates %} ({{ duplicates|length }} already in
+    "{{ destination_name }}", skipped as duplicate{{ 's' if duplicates|length != 1 else '' }}){% endif %}.
+    Uncheck any you don't want to add.
+</p>
+
+<form method="post" action="{{ url_for('playlist_prepend_add') }}">
+    <ol id="prepend-list">
+        {% for track in to_add %}
+        <li>
+            <label class="match">
+                <input
+                    type="checkbox"
+                    name="track"
+                    value="{{ track.uri }}"
+                    checked
+                />
+                <span>{{ track.artists }} – {{ track.name }}</span>
+            </label>
+        </li>
+        {% endfor %}
+    </ol>
+
+    <p style="margin-top: 1.5rem">
+        <button class="button" type="submit">Add to top of "{{ destination_name }}"</button>
+        <a class="button secondary" href="{{ url_for('playlist_prepend_picker') }}">Cancel</a>
+    </p>
+</form>
+{% endif %} {% endblock %}

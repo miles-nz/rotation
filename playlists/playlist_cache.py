@@ -9,13 +9,14 @@ from pathlib import Path
 from spotipy import Spotify
 
 from core.cancellation import CancelCheck, check_cancelled
+from core.paths import DATA_DIR
 
 logger = logging.getLogger(__name__)
 
 # On-disk cache of fetched playlist tracks, keyed by playlist id, so a
 # playlist whose snapshot_id (Spotify's change-token for its track list)
 # hasn't moved since the last run can skip the full paged re-fetch.
-CACHE_DIR = Path(".playlist_cache")
+CACHE_DIR = DATA_DIR / ".playlist_cache"
 
 
 def _cache_path(playlist_id: str) -> Path:

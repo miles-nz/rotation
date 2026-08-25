@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Done - Rotation{% endblock %}
+{% block content %}
+<h1>Done</h1>
+{% if not added %}
+<p>No tracks were added.</p>
+{% else %}
+<p>
+    Added {{ added }} track{{ 's' if added != 1 else '' }} to the top of "{{ destination_name }}".
+</p>
+{% endif %}
+<p><a class="button" href="{{ url_for('playlist_prepend_picker') }}">Back</a></p>
+{% endblock %}
