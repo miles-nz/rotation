@@ -18,7 +18,12 @@ class BackgroundJob:
 
     def __init__(self, logger_names: list[str]):
         self._lock = threading.Lock()
-        self._state: dict[str, Any] = {"status": "idle", "lines": [], "error": None}
+        self._state: dict[str, Any] = {
+            "status": "idle",
+            "lines": [],
+            "progress": {},
+            "error": None,
+        }
         self._cancel_event = threading.Event()
         self.result: Any = None
 
@@ -32,9 +37,16 @@ class BackgroundJob:
 
         class _Handler(logging.Handler):
             def emit(self, record: logging.LogRecord) -> None:
-                message = self.format(record)
+                # A record carrying a "progress" extra updates that
+                # playlist's entry in place instead of appending a line, so
+                # per-page fetch updates render as a moving bar rather than
+                # a growing wall of near-identical log lines.
+                progress = getattr(record, "progress", None)
                 with lock:
-                    state["lines"].append(message)
+                    if progress is not None:
+                        state["progress"][progress["id"]] = progress
+                    else:
+                        state["lines"].append(self.format(record))
 
         handler = _Handler()
         handler.setFormatter(logging.Formatter("%(asctime)s %(message)s", "%H:%M:%S"))
@@ -49,6 +61,7 @@ class BackgroundJob:
                 return False
             self._state["status"] = "running"
             self._state["lines"] = []
+            self._state["progress"] = {}
             self._state["error"] = None
         self._cancel_event.clear()
         self.result = None
@@ -78,4 +91,6 @@ class BackgroundJob:
 
     def status(self) -> dict:
         with self._lock:
-            return dict(self._state)
+            state = dict(self._state)
+            state["progress"] = dict(state["progress"])
+            return state

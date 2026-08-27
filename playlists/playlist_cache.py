@@ -62,15 +62,18 @@ def _fetch_playlist_tracks(
     sp: Spotify,
     playlist_id: str,
     playlist_name: str,
+    total: int,
     cancel_check: CancelCheck | None,
 ) -> list[dict]:
     tracks: list[dict] = []
+    processed = 0
     # limit=100 is the API max for this endpoint (spotipy's own default is
     # only 50), so this halves the number of paging requests for anything
     # longer than one page.
     results = sp.playlist_items(playlist_id, fields=_FIELDS, limit=100, additional_types=["track"])
     while results:
         for item in results["items"]:
+            processed += 1
             track = item.get("track")
             if track and track.get("uri") and not track.get("is_local"):
                 tracks.append(
@@ -87,7 +90,23 @@ def _fetch_playlist_tracks(
                         "added_at": item.get("added_at"),
                     }
                 )
-        logger.info("playlist '%s': %d tracks fetched so far", playlist_name, len(tracks))
+        # "progress" (rather than a plain message) lets a BackgroundJob
+        # update this playlist's bar in place instead of appending a new
+        # log line for every page.
+        logger.info(
+            "playlist '%s': %d/%d tracks fetched",
+            playlist_name,
+            processed,
+            total,
+            extra={
+                "progress": {
+                    "id": playlist_id,
+                    "name": playlist_name,
+                    "current": processed,
+                    "total": total,
+                }
+            },
+        )
         check_cancelled(cancel_check)
         results = sp.next(results) if results.get("next") else None
     return tracks
@@ -101,8 +120,9 @@ def get_playlist(
     when the playlist's snapshot_id (Spotify's change-token for its track
     list) still matches what's cached; otherwise pages through the
     playlist fresh and updates the cache."""
-    info = sp.playlist(playlist_id, fields="name,snapshot_id")
+    info = sp.playlist(playlist_id, fields="name,snapshot_id,tracks.total")
     name, snapshot_id = info["name"], info["snapshot_id"]
+    total = (info.get("tracks") or {}).get("total") or 0
     tracks = _load_cached_tracks(playlist_id, snapshot_id)
     if tracks is not None:
         logger.info(
@@ -112,7 +132,7 @@ def get_playlist(
         )
     else:
         logger.info("fetching playlist '%s'", name)
-        tracks = _fetch_playlist_tracks(sp, playlist_id, name, cancel_check)
+        tracks = _fetch_playlist_tracks(sp, playlist_id, name, total, cancel_check)
         _save_cached_tracks(playlist_id, snapshot_id, tracks)
     return {"name": name, "tracks": tracks}
 
@@ -192,15 +212,31 @@ def track_details_for_uris(sp: Spotify, uris) -> dict[str, dict]:
     return details
 
 
-def _fetch_liked_track_uris(sp: Spotify, cancel_check: CancelCheck | None) -> set[str]:
+def _fetch_liked_track_uris(
+    sp: Spotify, total: int, cancel_check: CancelCheck | None
+) -> set[str]:
     uris: set[str] = set()
+    processed = 0
     results = sp.current_user_saved_tracks(limit=50)
     while results:
         for item in results["items"]:
+            processed += 1
             track = item.get("track")
             if track and track.get("uri"):
                 uris.add(track["uri"])
-        logger.info("liked songs: %d tracks fetched so far", len(uris))
+        logger.info(
+            "liked songs: %d/%d tracks fetched",
+            processed,
+            total,
+            extra={
+                "progress": {
+                    "id": "liked_songs",
+                    "name": "Liked Songs",
+                    "current": processed,
+                    "total": total,
+                }
+            },
+        )
         check_cancelled(cancel_check)
         results = sp.next(results) if results.get("next") else None
     return uris
@@ -238,7 +274,7 @@ def get_liked_songs(sp: Spotify, cancel_check: CancelCheck | None = None) -> set
         logger.info("liked songs: count unchanged (%d), using cached set", total)
         return set(cached["uris"])
     logger.info("fetching liked songs")
-    uris = _fetch_liked_track_uris(sp, cancel_check)
+    uris = _fetch_liked_track_uris(sp, total, cancel_check)
     _save_liked_cache(uris)
     return uris
 

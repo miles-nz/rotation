@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from spotipy import Spotify
@@ -242,9 +243,21 @@ class CascadeRun:
         return ids
 
     def prefetch(self, sp: Spotify, cancel_check: CancelCheck | None = None) -> None:
-        self.cache.ensure_playlists(sp, self.all_playlist_ids(), cancel_check)
+        # Playlists and Liked Songs are independent reads, so run them
+        # concurrently rather than paying for Liked Songs' fetch time on
+        # top of the playlists' (which are themselves already fanned out
+        # across their own thread pool in ensure_playlists).
+        tasks = [lambda: self.cache.ensure_playlists(sp, self.all_playlist_ids(), cancel_check)]
         if any(needs_liked_songs(step) for step in self.steps):
-            self.cache.ensure_liked_songs(sp, cancel_check)
+            tasks.append(lambda: self.cache.ensure_liked_songs(sp, cancel_check))
+
+        if len(tasks) == 1:
+            tasks[0]()
+            return
+        with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
+            futures = [pool.submit(task) for task in tasks]
+            for future in futures:
+                future.result()
 
     def scan_current(self) -> Any:
         result = scan_step(self.cache, self.current_step)

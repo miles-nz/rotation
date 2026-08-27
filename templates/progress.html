@@ -2,7 +2,22 @@
 Rotation{% endblock %} {% block extra_style %} pre { background:
 #111; color: #ddd; padding: 1rem; border-radius: 6px; max-height: 20rem;
 overflow-y: auto; white-space: pre-wrap; word-break: break-word; font-size:
-0.85rem; } .error { color: var(--error); } {% endblock %} {% block content %}
+0.85rem; } .error { color: var(--error); }
+#progress-bars { margin-bottom: 1rem; }
+.progress-row { margin-bottom: 0.6rem; }
+.progress-row .progress-label {
+  display: flex; justify-content: space-between; font-size: 0.85rem;
+  color: var(--muted); margin-bottom: 0.25rem;
+}
+.progress-row .progress-track {
+  background: var(--secondary-bg); border-radius: 4px; height: 0.5rem;
+  overflow: hidden;
+}
+.progress-row .progress-fill {
+  background: var(--accent); height: 100%; border-radius: 4px;
+  transition: width 0.2s ease;
+}
+{% endblock %} {% block content %}
 <h1>
     <span class="spinner" id="spinner"></span
     ><span id="heading">{{ heading | default('Working…') }}</span>
@@ -11,6 +26,7 @@ overflow-y: auto; white-space: pre-wrap; word-break: break-word; font-size:
     {{ description | default('This can take a few minutes for large libraries.')
     }}
 </p>
+<div id="progress-bars"></div>
 <pre id="log">Starting…</pre>
 <p id="running-actions">
     <button class="button secondary" id="cancel-btn" onclick="cancel()">
@@ -33,9 +49,34 @@ overflow-y: auto; white-space: pre-wrap; word-break: break-word; font-size:
         await fetch(CANCEL_URL, { method: "POST" });
     }
 
+    function escapeHtml(s) {
+        return s.replace(/[&<>"']/g, (c) => (
+            { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+        ));
+    }
+
+    function renderProgress(progress) {
+        const container = document.getElementById("progress-bars");
+        const entries = Object.values(progress || {});
+        if (!entries.length) {
+            container.innerHTML = "";
+            return;
+        }
+        container.innerHTML = entries
+            .map((p) => {
+                const pct = p.total ? Math.min(100, Math.round((p.current / p.total) * 100)) : 0;
+                return `<div class="progress-row">
+                    <div class="progress-label"><span>${escapeHtml(p.name)}</span><span>${p.current}/${p.total}</span></div>
+                    <div class="progress-track"><div class="progress-fill" style="width: ${pct}%"></div></div>
+                </div>`;
+            })
+            .join("");
+    }
+
     async function poll() {
         const resp = await fetch(STATUS_URL);
         const data = await resp.json();
+        renderProgress(data.progress);
         document.getElementById("log").textContent =
             data.lines.join("\n") || "Starting…";
         document.getElementById("log").scrollTop =
