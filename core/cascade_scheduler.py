@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import hashlib
 import json
 import logging
 import os
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 PENDING_REVIEW_PATH = DATA_DIR / "cascade_pending_review.json"
 LAST_RUN_PATH = DATA_DIR / "cascade_last_run.json"
+LAST_NOTIFIED_SIGNATURE_PATH = DATA_DIR / "cascade_last_notified_signature.json"
 CHECK_INTERVAL_SECONDS = 300
 DEFAULT_AUTO_HOUR = 8
 
@@ -128,7 +130,25 @@ def load_pending_review() -> dict | None:
 
 
 def clear_pending_review() -> None:
+    """Called once a pending review has actually been walked through
+    (see /cascade/done). Also resets the notified-signature tracking, so a
+    future find - even if its content happens to match what was already
+    reviewed - is treated as fresh and notifies again."""
     PENDING_REVIEW_PATH.unlink(missing_ok=True)
+    LAST_NOTIFIED_SIGNATURE_PATH.unlink(missing_ok=True)
+
+
+def _read_last_notified_signature() -> str | None:
+    if not LAST_NOTIFIED_SIGNATURE_PATH.exists():
+        return None
+    try:
+        return json.loads(LAST_NOTIFIED_SIGNATURE_PATH.read_text()).get("signature")
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _write_last_notified_signature(signature: str) -> None:
+    LAST_NOTIFIED_SIGNATURE_PATH.write_text(json.dumps({"signature": signature}))
 
 
 def _write_pending_review(steps: list[dict], summaries: list[dict]) -> None:
@@ -234,6 +254,37 @@ def _summarize_step(step: dict, result) -> dict:
     return {"type": step_type, "label": label, "count": count, "detail": detail}
 
 
+def _result_item_uris(step: dict, result) -> list[str]:
+    """Returns the track URIs a scan_step() result would let you act on -
+    used to tell whether a later scan found genuinely different content,
+    not just the same items turning up again (see _run_signature)."""
+    step_type = step["type"]
+    if step_type == "duplicates":
+        return [d["uri"] for d in result]
+    if step_type == "playlist_filter":
+        return [m["uri"] for m in result["matches"]]
+    if step_type == "playlist_cleanup":
+        return [r["uri"] for r in result["removals"]]
+    if step_type == "playlist_diff":
+        return [t["uri"] for t in result["missing"]]
+    if step_type == "sync":
+        return [f"+{u}" for u in result["to_add"]] + [f"-{u}" for u in result["to_remove"]]
+    raise ValueError(f"unknown step type {step_type!r}")
+
+
+def _run_signature(steps: list[dict], results: list) -> str:
+    """A hash of every reviewable item across all steps, prefixed by step
+    index/type so the same URI in two different steps doesn't collide.
+    Two runs with the same signature found exactly the same content."""
+    parts = [
+        f"{i}:{step['type']}:{uri}"
+        for i, (step, result) in enumerate(zip(steps, results))
+        for uri in _result_item_uris(step, result)
+    ]
+    parts.sort()
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+
+
 _SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
 
@@ -301,20 +352,31 @@ def run_daily_scan(default_steps_fn: Callable[[Spotify], list[dict] | None]) -> 
     run = cascade_module.CascadeRun(steps)
     try:
         run.prefetch(sp)
-        summaries = [_summarize_step(step, cascade_module.scan_step(run.cache, step)) for step in steps]
+        results = [cascade_module.scan_step(run.cache, step) for step in steps]
     except Exception:
         logger.exception("cascade auto-scan: scan failed")
         _mark_ran_today()
         return
 
+    summaries = [_summarize_step(step, result) for step, result in zip(steps, results)]
     _mark_ran_today()
 
     if not any(s["count"] > 0 for s in summaries):
         logger.info("cascade auto-scan: nothing to review")
         return
 
+    # Always refresh the pending-review file/banner with the latest scan,
+    # but only send a notification if the actual reviewable items differ
+    # from what was last notified - otherwise you'd get pinged again every
+    # scheduled run for the same unreviewed stuff.
     _write_pending_review(steps, summaries)
+    signature = _run_signature(steps, results)
+    if signature == _read_last_notified_signature():
+        logger.info("cascade auto-scan: same items as last notification, skipping notify")
+        return
+
     _notify_pending_review(summaries)
+    _write_last_notified_signature(signature)
     logger.info("cascade auto-scan: found items to review")
 
 

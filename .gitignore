@@ -3,6 +3,7 @@
 .playlist_cache/
 cascade_pending_review.json
 cascade_last_run.json
+cascade_last_notified_signature.json
 __pycache__/
 *.pyc
 venv/
