@@ -1,6 +1,8 @@
 .env
 .cache*
 .playlist_cache/
+cascade_pending_review.json
+cascade_last_run.json
 __pycache__/
 *.pyc
 venv/

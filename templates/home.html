@@ -22,6 +22,19 @@
   {% elif not logged_in %}
     <p><a class="button" href="{{ url_for('login') }}">Log in with Spotify</a></p>
   {% else %}
+    {% if pending_review %}
+      <div class="cascade-step-card">
+        <p class="cascade-banner">Pending review</p>
+        <p>The daily cascade scan on {{ pending_review.created_at[:10] }} found items to review:</p>
+        <ul>
+          {% for s in pending_review.summaries %}
+            {% if s.count %}<li>{{ s.label }}: {{ s.detail }}</li>{% endif %}
+          {% endfor %}
+        </ul>
+        <p><a class="button" href="{{ url_for('cascade_resume_auto') }}">Review now</a></p>
+      </div>
+    {% endif %}
+
     <p>Choose a function:</p>
 
     <div class="function-card">
@@ -56,6 +69,13 @@
       <a class="function-link" href="{{ url_for('playlist_diff_picker') }}">
         <strong><span class="function-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 2 2 4-4" /><path d="m3 7 2 2 4-4" /><path d="M13 6h8" /><path d="M13 12h8" /><path d="M13 18h8" /></svg></span>Playlist Diff</strong>
         <span class="hint">Find tracks in one or more playlists that are missing from other playlists, and add the ones you want</span>
+      </a>
+    </div>
+
+    <div class="function-card">
+      <a class="function-link" href="{{ url_for('playlist_search_picker') }}">
+        <strong><span class="function-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 21-4.34-4.34" /><circle cx="11" cy="11" r="8" /></svg></span>Playlist Search</strong>
+        <span class="hint">Search playlists with any combination of conditions and exclusions - read-only, nothing gets added or removed</span>
       </a>
     </div>
 

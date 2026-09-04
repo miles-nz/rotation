@@ -9,6 +9,7 @@ from flask import Flask, jsonify, redirect, render_template, request, url_for
 from spotipy import Spotify
 
 from core.background_job import BackgroundJob
+import core.cascade_scheduler as cascade_scheduler
 from spotify.spotify_client import make_oauth, get_authenticated_client
 from core.sync import apply_diff, get_target_diff
 import playlists.cascade as cascade_module
@@ -18,6 +19,7 @@ import playlists.playlist_filter as playlist_filter_module
 import playlists.playlist_cleanup as playlist_cleanup_module
 import playlists.playlist_diff as playlist_diff_module
 import playlists.playlist_prepend as playlist_prepend_module
+import playlists.playlist_search as playlist_search_module
 
 load_dotenv()
 
@@ -53,6 +55,7 @@ DEFAULT_PREFERENCES = {
     "playlist_cleanup": _parse_json_env("DEFAULT_PLAYLIST_CLEANUP"),
     "playlist_diff": _parse_json_env("DEFAULT_PLAYLIST_DIFF"),
     "playlist_prepend": _parse_json_env("DEFAULT_PLAYLIST_PREPEND"),
+    "playlist_search": _parse_json_env("DEFAULT_PLAYLIST_SEARCH"),
     "cascade": _parse_json_env("DEFAULT_CASCADE"),
 }
 
@@ -108,9 +111,19 @@ _dup_job = BackgroundJob(["playlists.duplicates", "app"])
 _filter_job = BackgroundJob(["playlists.playlist_filter", "app"])
 _cleanup_job = BackgroundJob(["playlists.playlist_cleanup", "app"])
 _diff_job = BackgroundJob(["playlists.playlist_diff", "app"])
+_search_job = BackgroundJob(["playlists.playlist_search", "app"])
 _prepend_job = BackgroundJob(["playlists.playlist_prepend", "app"])
 _cascade_job = BackgroundJob(["playlists.playlist_cache", "app"])
 _cascade_run: cascade_module.CascadeRun | None = None
+
+# Gunicorn imports this file as the "app" module (not "__main__"), so it
+# always starts the scheduler here. Locally, `python app.py` runs this file
+# as "__main__", and app.run(debug=True) below spawns Werkzeug's reloader,
+# which re-executes the whole script in a child process with
+# WERKZEUG_RUN_MAIN=true - only start the thread there, not in the parent
+# watcher process, to avoid a duplicate scheduler.
+if __name__ != "__main__" or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+    cascade_scheduler.start_scheduler(_default_cascade_steps)
 
 
 def _credentials_configured() -> bool:
@@ -217,6 +230,25 @@ def _run_playlist_diff_scan(source_ids: list[str], target_ids: list[str]):
     return target
 
 
+def _run_playlist_search_scan(
+    include_playlist_ids: list[str],
+    criteria: list[dict],
+    exclude_playlist_ids: list[str],
+):
+    def target(cancel_check):
+        sp = get_authenticated_client()
+        results = playlist_search_module.search(
+            sp,
+            include_playlist_ids,
+            criteria,
+            exclude_playlist_ids=exclude_playlist_ids,
+            cancel_check=cancel_check,
+        )
+        return {"results": results}
+
+    return target
+
+
 def _run_playlist_prepend_scan(source_id: str, destination_id: str):
     def target(cancel_check):
         sp = get_authenticated_client()
@@ -309,10 +341,12 @@ def home():
         return render_template("home.html", needs_credentials=True)
 
     sp = get_authenticated_client()
+    pending_review = cascade_scheduler.load_pending_review() if sp is not None else None
     return render_template(
         "home.html",
         needs_credentials=False,
         logged_in=sp is not None,
+        pending_review=pending_review,
     )
 
 
@@ -981,6 +1015,141 @@ def playlist_diff_add():
     return render_template("playlist_diff_done.html", added_summary=added_summary)
 
 
+# --- Playlist Search ------------------------------------------------------
+# Standalone search: matches criteria across one or more playlists,
+# optionally excluding tracks already in other playlists (even a different
+# version of the same song). Intentionally not a Cascade step and doesn't
+# share picker/apply state with Playlist Filter, though it reuses its
+# generic create/add-tracks helpers same as Playlist Diff does.
+
+
+@app.route("/playlist-search")
+def playlist_search_picker():
+    if not _credentials_configured():
+        return render_template("playlist_search.html", needs_credentials=True)
+
+    sp = get_authenticated_client()
+    return render_template(
+        "playlist_search.html",
+        needs_credentials=False,
+        logged_in=sp is not None,
+        default_prefs=_default_preferences("playlist_search", sp),
+        field_operators=playlist_search_module.FIELD_OPERATORS,
+    )
+
+
+@app.route("/playlist-search/scan")
+def playlist_search_scan():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    playlist_ids = request.args.getlist("playlist_id")
+    fields = request.args.getlist("field")
+    operators = request.args.getlist("operator")
+    values = request.args.getlist("value")
+    value2s = request.args.getlist("value2")
+    exclude_playlist_ids = request.args.getlist("exclude_playlist_id")
+
+    if (
+        not playlist_ids
+        or not fields
+        or len(fields) != len(operators)
+        or len(fields) != len(values)
+        or len(fields) != len(value2s)
+        or any(not v for v in values)
+    ):
+        return redirect(url_for("playlist_search_picker"))
+
+    criteria = [
+        {"field": f, "operator": o, "value": v, "value2": v2 or None}
+        for f, o, v, v2 in zip(fields, operators, values, value2s)
+    ]
+
+    _search_job.start(
+        _run_playlist_search_scan(playlist_ids, criteria, exclude_playlist_ids)
+    )
+
+    return render_template(
+        "progress.html",
+        status_url=url_for("playlist_search_scan_status"),
+        cancel_url=url_for("playlist_search_scan_cancel"),
+        result_url=url_for("playlist_search_scan_result"),
+        back_url=url_for("playlist_search_picker"),
+        heading="Searching playlists…",
+        description="Reading your playlists to find matching tracks. This can take a few minutes for large libraries.",
+    )
+
+
+@app.route("/playlist-search/scan/status")
+def playlist_search_scan_status():
+    return jsonify(_search_job.status())
+
+
+@app.route("/playlist-search/scan/cancel", methods=["POST"])
+def playlist_search_scan_cancel():
+    _search_job.cancel()
+    return jsonify({"ok": True})
+
+
+@app.route("/playlist-search/scan/result")
+def playlist_search_scan_result():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    result = _search_job.result
+    if result is None:
+        return redirect(url_for("playlist_search_picker"))
+
+    return render_template("playlist_search_result.html", results=result["results"])
+
+
+@app.route("/playlist-search/apply", methods=["POST"])
+def playlist_search_apply():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    result = _search_job.result
+    if result is None:
+        return redirect(url_for("playlist_search_picker"))
+
+    result_uris = {t["uri"] for t in result["results"]}
+    selected_uris = [uri for uri in request.form.getlist("track") if uri in result_uris]
+    if not selected_uris:
+        return redirect(url_for("playlist_search_scan_result"))
+
+    destination_mode = request.form.get("destination_mode")
+    if destination_mode == "new":
+        destination_name = request.form.get("destination_name", "").strip()
+        if not destination_name:
+            return redirect(url_for("playlist_search_scan_result"))
+        playlist_id = playlist_filter_module.create_playlist(sp, destination_name)
+        playlist_name = destination_name
+    else:
+        playlist_id = request.form.get("destination_playlist_id")
+        playlist_name = request.form.get("destination_playlist_name")
+        if not playlist_id:
+            return redirect(url_for("playlist_search_scan_result"))
+
+    added, skipped = playlist_filter_module.add_tracks_to_playlist(sp, playlist_id, selected_uris)
+    _search_job.result = None
+
+    return render_template(
+        "playlist_search_done.html", added=added, skipped=skipped, playlist_name=playlist_name
+    )
+
+
 # --- Playlist Prepend -----------------------------------------------------
 
 
@@ -1104,10 +1273,24 @@ def cascade_picker():
     )
 
 
+def _start_cascade_run(steps: list[dict]):
+    global _cascade_run
+    _cascade_run = cascade_module.CascadeRun(steps)
+    _cascade_job.start(_run_cascade_prefetch(_cascade_run))
+
+    return render_template(
+        "progress.html",
+        status_url=url_for("cascade_scan_status"),
+        cancel_url=url_for("cascade_scan_cancel"),
+        result_url=url_for("cascade_step"),
+        back_url=url_for("cascade_picker"),
+        heading="Fetching playlists…",
+        description="Reading each playlist your cascade needs once, no matter how many steps use it. This can take a few minutes for large libraries.",
+    )
+
+
 @app.route("/cascade/start", methods=["POST"])
 def cascade_start():
-    global _cascade_run
-
     if not _credentials_configured():
         return redirect(url_for("home"))
 
@@ -1122,18 +1305,35 @@ def cascade_start():
     if not steps:
         return redirect(url_for("cascade_picker"))
 
-    _cascade_run = cascade_module.CascadeRun(steps)
-    _cascade_job.start(_run_cascade_prefetch(_cascade_run))
+    return _start_cascade_run(steps)
 
-    return render_template(
-        "progress.html",
-        status_url=url_for("cascade_scan_status"),
-        cancel_url=url_for("cascade_scan_cancel"),
-        result_url=url_for("cascade_step"),
-        back_url=url_for("cascade_picker"),
-        heading="Fetching playlists…",
-        description="Reading each playlist your cascade needs once, no matter how many steps use it. This can take a few minutes for large libraries.",
-    )
+
+@app.route("/cascade/resume-auto")
+def cascade_resume_auto():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    pending = cascade_scheduler.load_pending_review()
+    if not pending or not pending.get("steps"):
+        return redirect(url_for("cascade_picker"))
+
+    return _start_cascade_run(pending["steps"])
+
+
+@app.route("/cascade/auto/run-now", methods=["POST"])
+def cascade_auto_run_now():
+    """Debug helper: fires the daily auto-scan immediately instead of
+    waiting for the scheduled hour. Same scan-only code path as the real
+    scheduled job - lets the feature be verified without waiting a day."""
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    cascade_scheduler.run_daily_scan(_default_cascade_steps)
+    return redirect(url_for("home"))
 
 
 @app.route("/cascade/scan/status")
@@ -1196,6 +1396,7 @@ def cascade_done():
     if _cascade_run is None:
         return redirect(url_for("cascade_picker"))
 
+    cascade_scheduler.clear_pending_review()
     return render_template("cascade_done.html", summaries=_cascade_run.summaries)
 
 

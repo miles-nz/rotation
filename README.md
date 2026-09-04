@@ -21,6 +21,15 @@ functions. Currently available:
 - **Playlist Cleanup** - pick a playlist and a rule for what to keep (added
   date, release year, popularity, explicit, artist name, or track name);
   everything that doesn't match gets removed.
+- **Cascade** - chain the tools above together, fetching each playlist only
+  once no matter how many steps use it, then walk through each step's
+  review screen in order. Optionally, set `CASCADE_AUTO_ENABLED=1` to run
+  the Cascade's default steps automatically as a read-only scan (every day
+  at `CASCADE_AUTO_HOUR`, or on specific days/times via `CASCADE_AUTO_SCHEDULE`)
+  - it never applies changes on its own, but if it finds something to
+  review it posts a summary and a link back to the app to a Discord or
+  Slack webhook (`CASCADE_WEBHOOK_URL`) and shows a "pending review" banner
+  on the homepage until you review it.
 
 ## Setup
 
@@ -75,3 +84,10 @@ Railway can build and run it with no extra config.
 5. Keep the service at 1 replica - job progress and the OAuth token cache
    are kept in memory/on local disk per instance, so multiple replicas
    would see inconsistent state.
+6. Attach a Railway volume and mount it via `RAILWAY_VOLUME_MOUNT_PATH` (it
+   already needs to exist for the playlist/token caches to survive
+   redeploys - see `core/paths.py`). If you enable `CASCADE_AUTO_ENABLED`,
+   this same volume is what lets a pending review survive a redeploy: the
+   scheduler's "last ran" marker and any pending review are written there
+   too, so a restart won't cause a duplicate notification or lose a review
+   you haven't gotten to yet.

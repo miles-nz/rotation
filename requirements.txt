@@ -2,3 +2,5 @@ flask
 spotipy
 python-dotenv
 gunicorn
+requests
+certifi
