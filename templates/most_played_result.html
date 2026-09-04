@@ -1,0 +1,329 @@
+{% extends "base.html" %}
+{% block title %}Most Played - Rotation{% endblock %}
+{% block extra_style %}
+.results-table-wrap { overflow-x: auto; margin: 1rem 0; }
+table.results-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.results-table th, .results-table td { padding: 0.5rem 0.6rem; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.results-table th { color: var(--muted); font-weight: 600; user-select: none; }
+.results-table th.sortable { cursor: pointer; }
+.results-table th.sortable:hover { color: var(--text); }
+.results-table .sort-arrow { display: inline-block; width: 0.9em; opacity: 0.7; }
+.results-table tbody tr:hover { background: var(--hover-bg); }
+.explicit-badge { display: inline-block; font-size: 0.65rem; line-height: 1; border: 1px solid var(--muted); border-radius: 3px; padding: 0.15rem 0.25rem; margin-left: 0.4rem; color: var(--muted); vertical-align: middle; }
+.checkbox-col { width: 1.6rem; }
+.dest-option { display: block; margin: 0.5rem 0; }
+.dest-detail { margin: 0.5rem 0 0.5rem 1.5rem; }
+{% endblock %}
+{% block content %}
+<h1>Most Played {{ {"track": "Tracks", "artist": "Artists", "album": "Albums"}[entity_type] }}</h1>
+
+{% set entity_label = {"track": "tracks", "artist": "artists", "album": "albums"}[entity_type] %}
+{% if not results %}
+<p class="hint">
+    Nothing matched, even after scanning your top {{ scanned_count }} {{ entity_label }}.
+</p>
+<p><a class="button" href="{{ url_for('most_played_picker') }}">Back</a></p>
+{% else %}
+<p>
+    Found {{ results|length }} result{{ 's' if results|length != 1 else '' }}, most-played first.
+    Click a column to sort.
+    {% if entity_type == "track" %}Uncheck any you don't want, then add the rest to a playlist.{% endif %}
+</p>
+{% if truncated %}
+<p class="warning">
+    Only found {{ results|length }} of the {{ count }} you asked for, after scanning your top
+    {{ scanned_count }} {{ entity_label }} - there may not be many more in your history matching
+    these conditions.
+</p>
+{% elif scanned_count > count %}
+<p class="hint">
+    Scanned your top {{ scanned_count }} {{ entity_label }} to find these {{ results|length }} matches.
+</p>
+{% endif %}
+{% if unresolved_count %}
+<p class="hint">
+    {{ unresolved_count }} item{{ 's' if unresolved_count != 1 else '' }}
+    couldn't be matched on Spotify - shown below marked "Last.fm only",
+    with Spotify-only fields blank{% if entity_type == "track" %} and no
+    way to add {{ 'them' if unresolved_count != 1 else 'it' }} to a
+    playlist{% endif %}. Genres for those, when shown, come from Last.fm's
+    user tags instead of Spotify.
+</p>
+{% endif %}
+
+<form method="post" action="{{ url_for('most_played_apply') }}" id="apply-form">
+    <div class="results-table-wrap">
+        <table class="results-table" id="results-table">
+            <thead id="results-thead"></thead>
+            <tbody id="results-tbody"></tbody>
+        </table>
+    </div>
+
+    {% if entity_type == "track" %}
+    <fieldset style="margin-top: 1.5rem">
+        <legend>Add selected tracks to</legend>
+        <label class="dest-option">
+            <input type="radio" name="destination_mode" value="existing" checked /> An
+            existing playlist
+        </label>
+        <div class="dest-detail" id="dest-existing">
+            <div class="combo" id="dest-combo">
+                <input
+                    type="text"
+                    id="dest-combo-input"
+                    class="combo-input"
+                    placeholder="Search your playlists…"
+                    autocomplete="off"
+                />
+                <div class="combo-panel" id="dest-combo-panel"></div>
+            </div>
+        </div>
+        <label class="dest-option">
+            <input type="radio" name="destination_mode" value="new" /> A new playlist
+        </label>
+        <div class="dest-detail" id="dest-new" style="display: none">
+            <input
+                type="text"
+                id="dest-new-name"
+                name="destination_name"
+                placeholder="New playlist name"
+            />
+        </div>
+    </fieldset>
+
+    <input type="hidden" id="dest-playlist-id" name="destination_playlist_id" />
+    <input type="hidden" id="dest-playlist-name" name="destination_playlist_name" />
+
+    <p class="warning" id="apply-error" style="display: none"></p>
+
+    <p style="margin-top: 1.5rem">
+        <button class="button" type="submit">Add to playlist</button>
+        <a class="button secondary" href="{{ url_for('most_played_picker') }}">Back</a>
+    </p>
+    {% else %}
+    <p style="margin-top: 1.5rem">
+        <a class="button secondary" href="{{ url_for('most_played_picker') }}">Back</a>
+    </p>
+    {% endif %}
+</form>
+
+<script src="{{ url_for('static', filename='playlist_picker.js') }}"></script>
+<script>
+    const ENTITY_TYPE = {{ entity_type | tojson }};
+    const RESULTS = {{ results | tojson }};
+
+    const COLUMNS = {
+        track: [
+            { key: "artists", label: "Artist", sortable: true },
+            { key: "name", label: "Track", sortable: true },
+            { key: "album", label: "Album", sortable: true },
+            { key: "release_year", label: "Year", sortable: true },
+            { key: "genres", label: "Genres", sortable: false },
+            { key: "popularity", label: "Popularity", sortable: true },
+            { key: "playcount", label: "Play count", sortable: true },
+        ],
+        album: [
+            { key: "artists", label: "Artist", sortable: true },
+            { key: "name", label: "Album", sortable: true },
+            { key: "release_year", label: "Year", sortable: true },
+            { key: "genres", label: "Genres", sortable: false },
+            { key: "popularity", label: "Popularity", sortable: true },
+            { key: "playcount", label: "Play count", sortable: true },
+        ],
+        artist: [
+            { key: "name", label: "Artist", sortable: true },
+            { key: "genres", label: "Genres", sortable: false },
+            { key: "followers", label: "Followers", sortable: true },
+            { key: "popularity", label: "Popularity", sortable: true },
+            { key: "playcount", label: "Play count", sortable: true },
+        ],
+    };
+    const columns = COLUMNS[ENTITY_TYPE];
+
+    let selectedUris = new Set(RESULTS.filter((t) => t.uri).map((t) => t.uri));
+    let sortKey = "playcount";
+    let sortDir = "desc";
+
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, (c) => (
+            { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+        ));
+    }
+
+    function cellValue(item, key) {
+        if (key === "genres") return (item.genres || []).join(", ");
+        return item[key];
+    }
+
+    function sortValue(item, key) {
+        if (key === "genres") return (item.genres || []).join(", ").toLowerCase();
+        const v = item[key];
+        return typeof v === "string" ? v.toLowerCase() : v;
+    }
+
+    function compareItems(a, b) {
+        const av = sortValue(a, sortKey);
+        const bv = sortValue(b, sortKey);
+        const aEmpty = av === null || av === undefined || av === "";
+        const bEmpty = bv === null || bv === undefined || bv === "";
+        if (aEmpty || bEmpty) {
+            if (aEmpty && bEmpty) return 0;
+            return aEmpty ? 1 : -1; // blanks always sort last
+        }
+        const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+        return sortDir === "asc" ? cmp : -cmp;
+    }
+
+    function updateSortArrows() {
+        document.querySelectorAll("#results-thead th.sortable").forEach((th) => {
+            th.querySelector(".sort-arrow").textContent =
+                th.dataset.sort === sortKey ? (sortDir === "asc" ? "▲" : "▼") : "";
+        });
+    }
+
+    function renderHead() {
+        const thead = document.getElementById("results-thead");
+        const checkboxTh =
+            ENTITY_TYPE === "track"
+                ? '<th class="checkbox-col"><input type="checkbox" id="select-all" checked /></th>'
+                : "";
+        const cols = columns
+            .map((c) =>
+                c.sortable
+                    ? `<th class="sortable" data-sort="${c.key}">${c.label} <span class="sort-arrow"></span></th>`
+                    : `<th>${c.label}</th>`,
+            )
+            .join("");
+        thead.innerHTML = `<tr>${checkboxTh}${cols}</tr>`;
+
+        thead.querySelectorAll("th.sortable").forEach((th) => {
+            th.addEventListener("click", () => {
+                if (th.dataset.sort === sortKey) {
+                    sortDir = sortDir === "asc" ? "desc" : "asc";
+                } else {
+                    sortKey = th.dataset.sort;
+                    sortDir = "asc";
+                }
+                renderRows();
+                updateSortArrows();
+            });
+        });
+    }
+
+    const selectableCount = RESULTS.filter((t) => t.uri).length;
+
+    function updateSelectAll() {
+        const selectAll = document.getElementById("select-all");
+        if (!selectAll) return;
+        selectAll.checked = selectableCount > 0 && selectedUris.size === selectableCount;
+        selectAll.indeterminate = selectedUris.size > 0 && selectedUris.size < selectableCount;
+    }
+
+    function renderRows() {
+        const sorted = [...RESULTS].sort(compareItems);
+        const tbody = document.getElementById("results-tbody");
+        tbody.innerHTML = sorted
+            .map((item) => {
+                const checkboxTd =
+                    ENTITY_TYPE === "track"
+                        ? item.uri
+                            ? `<td><input type="checkbox" name="track" value="${escapeHtml(item.uri)}" ${selectedUris.has(item.uri) ? "checked" : ""} /></td>`
+                            : "<td></td>"
+                        : "";
+                const cells = columns
+                    .map((c) => {
+                        const value = cellValue(item, c.key);
+                        let cell = value === null || value === undefined || value === "" ? "" : escapeHtml(value);
+                        if (c.key === "name" && ENTITY_TYPE === "track" && item.explicit) {
+                            cell += '<span class="explicit-badge">E</span>';
+                        }
+                        if (c.key === "name" && !item.resolved) {
+                            cell += '<span class="explicit-badge" title="Not matched on Spotify - shown with Last.fm data only">Last.fm only</span>';
+                        }
+                        return `<td>${cell}</td>`;
+                    })
+                    .join("");
+                return `<tr>${checkboxTd}${cells}</tr>`;
+            })
+            .join("");
+
+        if (ENTITY_TYPE === "track") {
+            tbody.querySelectorAll('input[name="track"]').forEach((cb) => {
+                cb.addEventListener("change", () => {
+                    if (cb.checked) selectedUris.add(cb.value);
+                    else selectedUris.delete(cb.value);
+                    updateSelectAll();
+                });
+            });
+        }
+    }
+
+    renderHead();
+    renderRows();
+    updateSortArrows();
+
+    if (ENTITY_TYPE === "track") {
+        document.getElementById("select-all").addEventListener("change", (e) => {
+            selectedUris = e.target.checked
+                ? new Set(RESULTS.filter((t) => t.uri).map((t) => t.uri))
+                : new Set();
+            renderRows();
+        });
+
+        let destCombo = null;
+        (async () => {
+            try {
+                await fetchPlaylists("{{ url_for('api_playlists') }}", "{{ url_for('login') }}");
+            } catch (e) {
+                // Combo will just show no matches; "a new playlist" still works.
+            }
+            destCombo = setupCombo(
+                document.getElementById("dest-combo-input"),
+                document.getElementById("dest-combo-panel"),
+                null,
+            );
+        })();
+
+        document.querySelectorAll('input[name="destination_mode"]').forEach((radio) => {
+            radio.addEventListener("change", () => {
+                const mode = document.querySelector('input[name="destination_mode"]:checked').value;
+                document.getElementById("dest-existing").style.display = mode === "existing" ? "block" : "none";
+                document.getElementById("dest-new").style.display = mode === "new" ? "block" : "none";
+            });
+        });
+
+        document.getElementById("apply-form").addEventListener("submit", (e) => {
+            const errorEl = document.getElementById("apply-error");
+            const checked = document.querySelectorAll('input[name="track"]:checked');
+            if (checked.length === 0) {
+                e.preventDefault();
+                errorEl.textContent = "Select at least one track.";
+                errorEl.style.display = "block";
+                return;
+            }
+
+            const mode = document.querySelector('input[name="destination_mode"]:checked').value;
+            if (mode === "existing") {
+                const dest = destCombo ? destCombo.getValue() : { id: null, name: null };
+                if (!dest.id) {
+                    e.preventDefault();
+                    errorEl.textContent = "Pick a destination playlist.";
+                    errorEl.style.display = "block";
+                    return;
+                }
+                document.getElementById("dest-playlist-id").value = dest.id;
+                document.getElementById("dest-playlist-name").value = dest.name;
+            } else {
+                const name = document.getElementById("dest-new-name").value.trim();
+                if (!name) {
+                    e.preventDefault();
+                    errorEl.textContent = "Enter a name for the new playlist.";
+                    errorEl.style.display = "block";
+                    return;
+                }
+            }
+            errorEl.style.display = "none";
+        });
+    }
+</script>
+{% endif %} {% endblock %}

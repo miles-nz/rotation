@@ -20,6 +20,8 @@ import playlists.playlist_cleanup as playlist_cleanup_module
 import playlists.playlist_diff as playlist_diff_module
 import playlists.playlist_prepend as playlist_prepend_module
 import playlists.playlist_search as playlist_search_module
+import lastfm.lastfm_client as lastfm_client_module
+import lastfm.most_played as most_played_module
 
 load_dotenv()
 
@@ -114,6 +116,7 @@ _diff_job = BackgroundJob(["playlists.playlist_diff", "app"])
 _search_job = BackgroundJob(["playlists.playlist_search", "app"])
 _prepend_job = BackgroundJob(["playlists.playlist_prepend", "app"])
 _cascade_job = BackgroundJob(["playlists.playlist_cache", "app"])
+_most_played_job = BackgroundJob(["lastfm.most_played", "app"])
 _cascade_run: cascade_module.CascadeRun | None = None
 
 # Gunicorn imports this file as the "app" module (not "__main__"), so it
@@ -132,6 +135,10 @@ def _credentials_configured() -> bool:
         and os.environ.get("SPOTIFY_CLIENT_SECRET")
         and os.environ.get("SPOTIFY_REDIRECT_URI")
     )
+
+
+def _lastfm_configured() -> bool:
+    return bool(os.environ.get("LASTFM_API_KEY") and os.environ.get("LASTFM_USERNAME"))
 
 
 def _track_labels(sp: Spotify, uris: set[str]) -> list[str]:
@@ -245,6 +252,17 @@ def _run_playlist_search_scan(
             cancel_check=cancel_check,
         )
         return {"results": results}
+
+    return target
+
+
+def _run_most_played_scan(entity_type: str, period: str, count: int, criteria: list[dict]):
+    def target(cancel_check):
+        sp = get_authenticated_client()
+        result = most_played_module.find_most_played(
+            sp, entity_type, period, count, criteria, cancel_check=cancel_check
+        )
+        return {"entity_type": entity_type, "count": count, **result}
 
     return target
 
@@ -1147,6 +1165,150 @@ def playlist_search_apply():
 
     return render_template(
         "playlist_search_done.html", added=added, skipped=skipped, playlist_name=playlist_name
+    )
+
+
+# --- Most Played -----------------------------------------------------------
+# Your most-scrobbled tracks, artists, or albums from Last.fm, enriched with
+# Spotify metadata (release date, genre, popularity) for filtering. Artists
+# and Albums mode are read-only browsing; only Tracks mode can add results
+# to a playlist.
+
+
+@app.route("/most-played")
+def most_played_picker():
+    if not _credentials_configured():
+        return render_template("most_played.html", needs_credentials=True)
+
+    sp = get_authenticated_client()
+    return render_template(
+        "most_played.html",
+        needs_credentials=False,
+        needs_lastfm=not _lastfm_configured(),
+        logged_in=sp is not None,
+        field_operators=most_played_module.FIELD_OPERATORS,
+        periods=lastfm_client_module.PERIODS,
+    )
+
+
+@app.route("/most-played/scan")
+def most_played_scan():
+    if not _credentials_configured() or not _lastfm_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    entity_type = request.args.get("entity_type")
+    period = request.args.get("period", "overall")
+    count = request.args.get("count", type=int)
+    fields = request.args.getlist("field")
+    operators = request.args.getlist("operator")
+    values = request.args.getlist("value")
+    value2s = request.args.getlist("value2")
+
+    if (
+        entity_type not in most_played_module.FIELD_OPERATORS
+        or period not in lastfm_client_module.PERIODS
+        or not count
+        or len(fields) != len(operators)
+        or len(fields) != len(values)
+        or len(fields) != len(value2s)
+        or any(not v for v in values)
+    ):
+        return redirect(url_for("most_played_picker"))
+
+    count = max(1, min(count, 200))
+    criteria = [
+        {"field": f, "operator": o, "value": v, "value2": v2 or None}
+        for f, o, v, v2 in zip(fields, operators, values, value2s)
+    ]
+
+    _most_played_job.start(_run_most_played_scan(entity_type, period, count, criteria))
+
+    return render_template(
+        "progress.html",
+        status_url=url_for("most_played_scan_status"),
+        cancel_url=url_for("most_played_scan_cancel"),
+        result_url=url_for("most_played_scan_result"),
+        back_url=url_for("most_played_picker"),
+        heading="Looking up your most played…",
+        description="Fetching your top scrobbles from Last.fm, then resolving each one on Spotify for filtering. If you've added conditions, it keeps paging further into your scrobble history until enough results match (or gives up after a while). This can take a minute or two the first time - repeat runs reuse what's already resolved.",
+    )
+
+
+@app.route("/most-played/scan/status")
+def most_played_scan_status():
+    return jsonify(_most_played_job.status())
+
+
+@app.route("/most-played/scan/cancel", methods=["POST"])
+def most_played_scan_cancel():
+    _most_played_job.cancel()
+    return jsonify({"ok": True})
+
+
+@app.route("/most-played/scan/result")
+def most_played_scan_result():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    result = _most_played_job.result
+    if result is None:
+        return redirect(url_for("most_played_picker"))
+
+    return render_template(
+        "most_played_result.html",
+        entity_type=result["entity_type"],
+        results=result["results"],
+        unresolved_count=result["unresolved_count"],
+        count=result["count"],
+        scanned_count=result["scanned_count"],
+        truncated=result["truncated"],
+    )
+
+
+@app.route("/most-played/apply", methods=["POST"])
+def most_played_apply():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    result = _most_played_job.result
+    if result is None or result["entity_type"] != "track":
+        return redirect(url_for("most_played_picker"))
+
+    result_uris = {t["uri"] for t in result["results"]}
+    selected_uris = [uri for uri in request.form.getlist("track") if uri in result_uris]
+    if not selected_uris:
+        return redirect(url_for("most_played_scan_result"))
+
+    destination_mode = request.form.get("destination_mode")
+    if destination_mode == "new":
+        destination_name = request.form.get("destination_name", "").strip()
+        if not destination_name:
+            return redirect(url_for("most_played_scan_result"))
+        playlist_id = playlist_filter_module.create_playlist(sp, destination_name)
+        playlist_name = destination_name
+    else:
+        playlist_id = request.form.get("destination_playlist_id")
+        playlist_name = request.form.get("destination_playlist_name")
+        if not playlist_id:
+            return redirect(url_for("most_played_scan_result"))
+
+    added, skipped = playlist_filter_module.add_tracks_to_playlist(sp, playlist_id, selected_uris)
+    _most_played_job.result = None
+
+    return render_template(
+        "most_played_done.html", added=added, skipped=skipped, playlist_name=playlist_name
     )
 
 

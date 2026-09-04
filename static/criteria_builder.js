@@ -1,7 +1,8 @@
 // Shared field/operator/value criteria-builder UI used by the Playlist
-// Filter, Playlist Cleanup, and Cascade pages. Field/operator validity
-// comes from the backend (playlists/playlist_filter.py FIELD_OPERATORS,
-// extended in playlists/playlist_cleanup.py) via fieldOperatorsFromSpec;
+// Filter, Playlist Cleanup, Cascade, and Most Played pages. Field/operator
+// validity comes from the backend (playlists/playlist_filter.py
+// FIELD_OPERATORS, extended in playlists/playlist_cleanup.py; or
+// lastfm/most_played.py's own FIELD_OPERATORS) via fieldOperatorsFromSpec;
 // only display labels live here.
 
 const FIELD_LABELS = {
@@ -11,6 +12,11 @@ const FIELD_LABELS = {
     explicit: "Explicit",
     artist: "Artist name",
     track_name: "Track name",
+    genre: "Genre",
+    playcount: "Play count",
+    followers: "Followers",
+    album_name: "Album name",
+    artist_name: "Artist name",
 };
 
 const OPERATOR_LABELS = {
@@ -159,18 +165,18 @@ function buildCriteriaBuilder(container, fieldOperators, fieldOrder, initial) {
             return;
         }
 
+        const numericFields = ["release_year", "popularity", "playcount", "followers"];
         const input1 = document.createElement("input");
-        input1.type =
-            field === "release_year" || field === "popularity"
-                ? "number"
-                : "text";
+        input1.type = numericFields.includes(field) ? "number" : "text";
         input1.className = "value-input";
         input1.placeholder =
             field === "release_year"
                 ? "e.g. 2026"
                 : field === "popularity"
                   ? "0-100"
-                  : "text to match";
+                  : field === "playcount" || field === "followers"
+                    ? "e.g. 50"
+                    : "text to match";
         if (value) input1.value = value;
         valueInputs.appendChild(input1);
 

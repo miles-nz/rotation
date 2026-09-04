@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}Most Played - Rotation{% endblock %}
+{% block content %}
+<h1>Most Played</h1>
+<p>
+    See your most-scrobbled tracks, artists, or albums from Last.fm,
+    enriched with Spotify metadata (release date, genre, popularity) for
+    filtering. Artists and Albums are read-only browsing; only Tracks can
+    be added to a playlist. With conditions set, this looks past your
+    literal top N to find that many matches - e.g. "top 200 before 1990"
+    scans further into your history until it finds 200 that qualify, not
+    just whichever of your top 200 happen to.
+</p>
+
+{% if needs_credentials %}
+<p class="warning">
+    No Spotify credentials found. Copy <code>.env.example</code> to
+    <code>.env</code> and fill in <code>SPOTIFY_CLIENT_ID</code> and
+    <code>SPOTIFY_CLIENT_SECRET</code>, then restart the app. See the README for
+    how to register a Spotify app.
+</p>
+{% elif needs_lastfm %}
+<p class="warning">
+    No Last.fm credentials found. Copy <code>.env.example</code> to
+    <code>.env</code> and fill in <code>LASTFM_API_KEY</code> and
+    <code>LASTFM_USERNAME</code>, then restart the app. See the README for
+    how to get a free Last.fm API key.
+</p>
+{% elif not logged_in %}
+<p><a class="button" href="{{ url_for('login') }}">Log in with Spotify</a></p>
+{% else %}
+<fieldset>
+    <legend>Show my most played</legend>
+    <label style="display: inline-block; margin-right: 1.5rem">
+        <input type="radio" name="entity_type" value="track" checked /> Tracks
+    </label>
+    <label style="display: inline-block; margin-right: 1.5rem">
+        <input type="radio" name="entity_type" value="artist" /> Artists
+    </label>
+    <label style="display: inline-block">
+        <input type="radio" name="entity_type" value="album" /> Albums
+    </label>
+</fieldset>
+
+<fieldset>
+    <legend>Time range</legend>
+    <select id="period-select">
+        {% for period in periods %}
+        <option value="{{ period }}" {{ "selected" if period == "overall" }}>
+            {{ {"overall": "All time", "7day": "Last 7 days", "1month": "Last month", "3month": "Last 3 months", "6month": "Last 6 months", "12month": "Last 12 months"}[period] }}
+        </option>
+        {% endfor %}
+    </select>
+    <select id="count-select">
+        <option value="25">Top 25</option>
+        <option value="50" selected>Top 50</option>
+        <option value="100">Top 100</option>
+        <option value="200">Top 200</option>
+    </select>
+</fieldset>
+
+<fieldset>
+    <legend>Where (all conditions must match)</legend>
+    <p class="hint" id="switch-hint" style="display: none">
+        Switching type clears the conditions below.
+    </p>
+    <div id="criteria-list"></div>
+    <p>
+        <button class="button secondary" id="add-criteria-btn" type="button">
+            + Add another condition
+        </button>
+    </p>
+</fieldset>
+
+<p class="warning" id="picker-error" style="display: none"></p>
+<p>
+    <a class="button" id="scan-link" href="#">Show most played</a>
+</p>
+
+<script src="{{ url_for('static', filename='criteria_builder.js') }}"></script>
+<script>
+    const FIELD_OPERATORS_BY_TYPE = {{ field_operators | tojson }};
+    const criteriaContainer = document.getElementById("criteria-list");
+
+    function specFor(entityType) {
+        return {
+            fieldOperators: fieldOperatorsFromSpec(FIELD_OPERATORS_BY_TYPE[entityType]),
+            fieldOrder: Object.keys(FIELD_OPERATORS_BY_TYPE[entityType]),
+        };
+    }
+
+    let currentType = "track";
+    let spec = specFor(currentType);
+    let criteriaRowManager = buildCriteriaListBuilder(
+        criteriaContainer,
+        spec.fieldOperators,
+        spec.fieldOrder,
+    );
+    criteriaRowManager.reset(null);
+
+    document
+        .getElementById("add-criteria-btn")
+        .addEventListener("click", () => criteriaRowManager.addRow(null));
+
+    document.querySelectorAll('input[name="entity_type"]').forEach((radio) => {
+        radio.addEventListener("change", () => {
+            const type = document.querySelector('input[name="entity_type"]:checked').value;
+            if (type === currentType) return;
+            currentType = type;
+            spec = specFor(currentType);
+            criteriaRowManager = buildCriteriaListBuilder(
+                criteriaContainer,
+                spec.fieldOperators,
+                spec.fieldOrder,
+            );
+            criteriaRowManager.reset(null);
+            document.getElementById("switch-hint").style.display = "block";
+        });
+    });
+
+    document.getElementById("scan-link").addEventListener("click", (e) => {
+        e.preventDefault();
+        const errorEl = document.getElementById("picker-error");
+
+        let criteria;
+        try {
+            criteria = criteriaRowManager.getValues();
+        } catch (err) {
+            errorEl.textContent = err.message;
+            errorEl.style.display = "block";
+            return;
+        }
+        errorEl.style.display = "none";
+
+        const params = new URLSearchParams();
+        params.append("entity_type", currentType);
+        params.append("period", document.getElementById("period-select").value);
+        params.append("count", document.getElementById("count-select").value);
+        criteria.forEach((c) => {
+            params.append("field", c.field);
+            params.append("operator", c.operator);
+            params.append("value", c.value);
+            params.append("value2", c.value2 || "");
+        });
+        window.location = "{{ url_for('most_played_scan') }}?" + params.toString();
+    });
+</script>
+{% endif %} {% endblock %}
