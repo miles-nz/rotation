@@ -1,0 +1,256 @@
+{% extends "base.html" %}
+{% block title %}Playlist Search - Rotation{% endblock %}
+{% block content %}
+<h1>Playlist Search</h1>
+<p>
+    Search across one or more playlists with any combination of conditions -
+    release date, when added, popularity, and more - and optionally exclude
+    tracks already in other playlists (even a different version of the same
+    song). Nothing changes until you pick tracks on the results page and
+    add them to a playlist.
+</p>
+
+{% if needs_credentials %}
+<p class="warning">
+    No Spotify credentials found. Copy <code>.env.example</code> to
+    <code>.env</code> and fill in <code>SPOTIFY_CLIENT_ID</code> and
+    <code>SPOTIFY_CLIENT_SECRET</code>, then restart the app. See the README for
+    how to register a Spotify app.
+</p>
+{% elif not logged_in %}
+<p><a class="button" href="{{ url_for('login') }}">Log in with Spotify</a></p>
+{% else %}
+<div id="configured-view" style="display: none">
+    <p>Searching in:</p>
+    <ul id="configured-sources"></ul>
+    <p id="configured-criteria"></p>
+    <p id="configured-excludes-heading" style="display: none">
+        Excluding tracks already in:
+    </p>
+    <ul id="configured-excludes"></ul>
+    <p>
+        <a class="button" id="scan-link" href="#">Search</a>
+        <button class="button secondary" id="edit-btn" type="button">
+            Edit
+        </button>
+    </p>
+</div>
+
+<div id="picker-view" style="display: none">
+    <fieldset>
+        <legend>Search in these playlists</legend>
+        <div id="source-combo-list"></div>
+        <p>
+            <button class="button secondary" id="add-source-btn" type="button">
+                + Add another playlist
+            </button>
+        </p>
+    </fieldset>
+
+    <fieldset>
+        <legend>Where (all conditions must match)</legend>
+        <div id="criteria-list"></div>
+        <p>
+            <button class="button secondary" id="add-criteria-btn" type="button">
+                + Add another condition
+            </button>
+        </p>
+    </fieldset>
+
+    <fieldset>
+        <legend>Exclude tracks already in these playlists (optional)</legend>
+        <div id="exclude-combo-list"></div>
+        <p>
+            <button class="button secondary" id="add-exclude-btn" type="button">
+                + Add a playlist to exclude
+            </button>
+        </p>
+    </fieldset>
+
+    <p id="picker-loading"><span class="spinner"></span>Loading playlists…</p>
+    <p class="warning" id="picker-error" style="display: none"></p>
+    <p>
+        <button class="button" id="save-btn" type="button">Save</button>
+        <button
+            class="button secondary"
+            id="cancel-btn"
+            type="button"
+            style="display: none"
+        >
+            Cancel
+        </button>
+    </p>
+</div>
+
+<script src="{{ url_for('static', filename='playlist_picker.js') }}"></script>
+<script src="{{ url_for('static', filename='criteria_builder.js') }}"></script>
+<script>
+    let currentSaved = {{ default_prefs | tojson }};
+
+    const FIELD_OPERATORS = fieldOperatorsFromSpec({{ field_operators | tojson }});
+    const FIELD_ORDER = Object.keys(FIELD_OPERATORS);
+
+    function getSaved() {
+        return currentSaved &&
+            Array.isArray(currentSaved.sources) &&
+            currentSaved.sources.length >= 1 &&
+            Array.isArray(currentSaved.criteria) &&
+            currentSaved.criteria.length >= 1 &&
+            Array.isArray(currentSaved.excludes)
+            ? currentSaved
+            : null;
+    }
+
+    function showConfigured(saved) {
+        document.getElementById("picker-view").style.display = "none";
+        document.getElementById("configured-view").style.display = "block";
+
+        const list = document.getElementById("configured-sources");
+        list.innerHTML = "";
+        saved.sources.forEach((p) => {
+            const li = document.createElement("li");
+            li.textContent = p.name;
+            list.appendChild(li);
+        });
+
+        document.getElementById("configured-criteria").textContent =
+            "Where " + describeCriteria(saved.criteria);
+
+        document.getElementById("configured-excludes-heading").style.display =
+            saved.excludes.length ? "block" : "none";
+        const excludeList = document.getElementById("configured-excludes");
+        excludeList.innerHTML = "";
+        saved.excludes.forEach((p) => {
+            const li = document.createElement("li");
+            li.textContent = p.name;
+            excludeList.appendChild(li);
+        });
+
+        const params = new URLSearchParams();
+        saved.sources.forEach((p) => params.append("playlist_id", p.id));
+        saved.criteria.forEach((c) => {
+            params.append("field", c.field);
+            params.append("operator", c.operator);
+            params.append("value", c.value);
+            params.append("value2", c.value2 || "");
+        });
+        saved.excludes.forEach((p) => params.append("exclude_playlist_id", p.id));
+        document.getElementById("scan-link").href =
+            "{{ url_for('playlist_search_scan') }}?" + params.toString();
+    }
+
+    const sourceRowManager = createComboRowManager(
+        document.getElementById("source-combo-list"),
+        1,
+    );
+
+    document
+        .getElementById("add-source-btn")
+        .addEventListener("click", () => sourceRowManager.addRow(null));
+
+    const criteriaRowManager = buildCriteriaListBuilder(
+        document.getElementById("criteria-list"),
+        FIELD_OPERATORS,
+        FIELD_ORDER,
+    );
+
+    document
+        .getElementById("add-criteria-btn")
+        .addEventListener("click", () => criteriaRowManager.addRow(null));
+
+    const excludeRowManager = createComboRowManager(
+        document.getElementById("exclude-combo-list"),
+        0,
+    );
+
+    document
+        .getElementById("add-exclude-btn")
+        .addEventListener("click", () => excludeRowManager.addRow(null));
+
+    async function showPicker(saved) {
+        document.getElementById("configured-view").style.display = "none";
+        document.getElementById("picker-view").style.display = "block";
+        document.getElementById("picker-error").style.display = "none";
+        document.getElementById("cancel-btn").style.display = saved
+            ? "inline-block"
+            : "none";
+
+        document.getElementById("picker-loading").style.display = "block";
+        document.getElementById("save-btn").disabled = true;
+
+        const errorEl = document.getElementById("picker-error");
+        try {
+            await fetchPlaylists(
+                "{{ url_for('api_playlists') }}",
+                "{{ url_for('login') }}",
+            );
+        } catch (e) {
+            document.getElementById("picker-loading").style.display = "none";
+            errorEl.textContent =
+                "Failed to load your playlists. Check your connection and try again.";
+            errorEl.style.display = "block";
+            return;
+        }
+        document.getElementById("picker-loading").style.display = "none";
+        document.getElementById("save-btn").disabled = false;
+
+        const sources = saved && saved.sources.length ? saved.sources : [null];
+        sourceRowManager.reset(sources);
+
+        criteriaRowManager.reset(saved ? saved.criteria : null);
+
+        excludeRowManager.reset(saved && saved.excludes ? saved.excludes : []);
+    }
+
+    document
+        .getElementById("edit-btn")
+        .addEventListener("click", () => showPicker(getSaved()));
+
+    document.getElementById("cancel-btn").addEventListener("click", () => {
+        const saved = getSaved();
+        if (saved) showConfigured(saved);
+    });
+
+    document.getElementById("save-btn").addEventListener("click", () => {
+        const errorEl = document.getElementById("picker-error");
+        const sources = sourceRowManager.getValues();
+
+        if (sources.some((s) => !s.id)) {
+            errorEl.textContent =
+                "Pick a playlist for every slot (or remove empty ones).";
+            errorEl.style.display = "block";
+            return;
+        }
+
+        let criteria;
+        try {
+            criteria = criteriaRowManager.getValues();
+        } catch (e) {
+            errorEl.textContent = e.message;
+            errorEl.style.display = "block";
+            return;
+        }
+
+        const excludes = excludeRowManager.getValues();
+        if (excludes.some((e) => !e.id)) {
+            errorEl.textContent =
+                "Pick a playlist for every exclude slot (or remove empty ones).";
+            errorEl.style.display = "block";
+            return;
+        }
+
+        errorEl.style.display = "none";
+
+        const saved = { sources, criteria, excludes };
+        currentSaved = saved;
+        showConfigured(saved);
+    });
+
+    const saved = getSaved();
+    if (saved) {
+        showConfigured(saved);
+    } else {
+        showPicker(null);
+    }
+</script>
+{% endif %} {% endblock %}

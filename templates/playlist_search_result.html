@@ -1,0 +1,249 @@
+{% extends "base.html" %}
+{% block title %}Search Results - Rotation{% endblock %}
+{% block extra_style %}
+.dest-option { display: block; margin: 0.5rem 0; }
+.dest-detail { margin: 0.5rem 0 0.5rem 1.5rem; }
+.results-table-wrap { overflow-x: auto; margin: 1rem 0; }
+table.results-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.results-table th, .results-table td { padding: 0.5rem 0.6rem; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.results-table th { color: var(--muted); font-weight: 600; user-select: none; }
+.results-table th.sortable { cursor: pointer; }
+.results-table th.sortable:hover { color: var(--text); }
+.results-table .sort-arrow { display: inline-block; width: 0.9em; opacity: 0.7; }
+.results-table tbody tr:hover { background: var(--hover-bg); }
+.explicit-badge { display: inline-block; font-size: 0.65rem; line-height: 1; border: 1px solid var(--muted); border-radius: 3px; padding: 0.15rem 0.25rem; margin-left: 0.4rem; color: var(--muted); vertical-align: middle; }
+.checkbox-col { width: 1.6rem; }
+{% endblock %}
+{% block content %}
+<h1>Search Results</h1>
+
+{% if not results %}
+<p class="hint">No tracks matched.</p>
+<p><a class="button" href="{{ url_for('playlist_search_picker') }}">Back</a></p>
+{% else %}
+<p>
+    Found {{ results|length }} track{{ 's' if results|length != 1 else '' }}.
+    Click a column to sort. Uncheck any you don't want, then add the rest to
+    a playlist.
+</p>
+
+<form method="post" action="{{ url_for('playlist_search_apply') }}" id="apply-form">
+    <div class="results-table-wrap">
+        <table class="results-table" id="results-table">
+            <thead>
+                <tr>
+                    <th class="checkbox-col">
+                        <input type="checkbox" id="select-all" checked />
+                    </th>
+                    <th class="sortable" data-sort="artists">Artist <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-sort="name">Track <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-sort="album">Album <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-sort="release_year">Year <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-sort="popularity">Popularity <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-sort="added_at">Added <span class="sort-arrow"></span></th>
+                </tr>
+            </thead>
+            <tbody id="results-tbody"></tbody>
+        </table>
+    </div>
+
+    <fieldset style="margin-top: 1.5rem">
+        <legend>Add selected tracks to</legend>
+        <label class="dest-option">
+            <input type="radio" name="destination_mode" value="existing" checked /> An
+            existing playlist
+        </label>
+        <div class="dest-detail" id="dest-existing">
+            <div class="combo" id="dest-combo">
+                <input
+                    type="text"
+                    id="dest-combo-input"
+                    class="combo-input"
+                    placeholder="Search your playlists…"
+                    autocomplete="off"
+                />
+                <div class="combo-panel" id="dest-combo-panel"></div>
+            </div>
+        </div>
+        <label class="dest-option">
+            <input type="radio" name="destination_mode" value="new" /> A new playlist
+        </label>
+        <div class="dest-detail" id="dest-new" style="display: none">
+            <input
+                type="text"
+                id="dest-new-name"
+                name="destination_name"
+                placeholder="New playlist name"
+            />
+        </div>
+    </fieldset>
+
+    <input type="hidden" id="dest-playlist-id" name="destination_playlist_id" />
+    <input type="hidden" id="dest-playlist-name" name="destination_playlist_name" />
+
+    <p class="warning" id="apply-error" style="display: none"></p>
+
+    <p style="margin-top: 1.5rem">
+        <button class="button" type="submit">Add to playlist</button>
+        <a class="button secondary" href="{{ url_for('playlist_search_picker') }}">Cancel</a>
+    </p>
+</form>
+
+<script src="{{ url_for('static', filename='playlist_picker.js') }}"></script>
+<script>
+    const RESULTS = {{ results | tojson }};
+    let selectedUris = new Set(RESULTS.map((t) => t.uri));
+    let sortKey = "artists";
+    let sortDir = "asc";
+
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, (c) => (
+            { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+        ));
+    }
+
+    function sortValue(track, key) {
+        const v = track[key];
+        if (key === "release_year" || key === "popularity") return v;
+        return v ? String(v).toLowerCase() : "";
+    }
+
+    function compareTracks(a, b) {
+        const av = sortValue(a, sortKey);
+        const bv = sortValue(b, sortKey);
+        const aEmpty = av === null || av === undefined || av === "";
+        const bEmpty = bv === null || bv === undefined || bv === "";
+        if (aEmpty || bEmpty) {
+            if (aEmpty && bEmpty) return 0;
+            return aEmpty ? 1 : -1; // blanks always sort last
+        }
+        const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+        return sortDir === "asc" ? cmp : -cmp;
+    }
+
+    function updateSelectAll() {
+        const selectAll = document.getElementById("select-all");
+        selectAll.checked = selectedUris.size === RESULTS.length;
+        selectAll.indeterminate =
+            selectedUris.size > 0 && selectedUris.size < RESULTS.length;
+    }
+
+    function updateSortArrows() {
+        document.querySelectorAll(".results-table th.sortable").forEach((th) => {
+            th.querySelector(".sort-arrow").textContent =
+                th.dataset.sort === sortKey ? (sortDir === "asc" ? "▲" : "▼") : "";
+        });
+    }
+
+    function renderRows() {
+        const sorted = [...RESULTS].sort(compareTracks);
+        document.getElementById("results-tbody").innerHTML = sorted
+            .map(
+                (t) => `<tr>
+                    <td><input type="checkbox" name="track" value="${escapeHtml(t.uri)}" ${selectedUris.has(t.uri) ? "checked" : ""} /></td>
+                    <td>${escapeHtml(t.artists)}</td>
+                    <td>${escapeHtml(t.name)}${t.explicit ? '<span class="explicit-badge">E</span>' : ""}</td>
+                    <td>${escapeHtml(t.album || "")}</td>
+                    <td>${t.release_year || ""}</td>
+                    <td>${t.popularity != null ? t.popularity : ""}</td>
+                    <td>${t.added_at ? escapeHtml(t.added_at.slice(0, 10)) : ""}</td>
+                </tr>`,
+            )
+            .join("");
+
+        document.querySelectorAll('#results-tbody input[name="track"]').forEach((cb) => {
+            cb.addEventListener("change", () => {
+                if (cb.checked) selectedUris.add(cb.value);
+                else selectedUris.delete(cb.value);
+                updateSelectAll();
+            });
+        });
+
+        updateSortArrows();
+    }
+
+    document.querySelectorAll(".results-table th.sortable").forEach((th) => {
+        th.addEventListener("click", () => {
+            if (th.dataset.sort === sortKey) {
+                sortDir = sortDir === "asc" ? "desc" : "asc";
+            } else {
+                sortKey = th.dataset.sort;
+                sortDir = "asc";
+            }
+            renderRows();
+        });
+    });
+
+    document.getElementById("select-all").addEventListener("change", (e) => {
+        selectedUris = e.target.checked ? new Set(RESULTS.map((t) => t.uri)) : new Set();
+        renderRows();
+    });
+
+    renderRows();
+
+    let destCombo = null;
+
+    (async () => {
+        try {
+            await fetchPlaylists(
+                "{{ url_for('api_playlists') }}",
+                "{{ url_for('login') }}",
+            );
+        } catch (e) {
+            // Combo will just show no matches; "a new playlist" still works.
+        }
+        destCombo = setupCombo(
+            document.getElementById("dest-combo-input"),
+            document.getElementById("dest-combo-panel"),
+            null,
+        );
+    })();
+
+    document.querySelectorAll('input[name="destination_mode"]').forEach((radio) => {
+        radio.addEventListener("change", () => {
+            const mode = document.querySelector(
+                'input[name="destination_mode"]:checked',
+            ).value;
+            document.getElementById("dest-existing").style.display =
+                mode === "existing" ? "block" : "none";
+            document.getElementById("dest-new").style.display =
+                mode === "new" ? "block" : "none";
+        });
+    });
+
+    document.getElementById("apply-form").addEventListener("submit", (e) => {
+        const errorEl = document.getElementById("apply-error");
+        const checked = document.querySelectorAll('input[name="track"]:checked');
+        if (checked.length === 0) {
+            e.preventDefault();
+            errorEl.textContent = "Select at least one track.";
+            errorEl.style.display = "block";
+            return;
+        }
+
+        const mode = document.querySelector(
+            'input[name="destination_mode"]:checked',
+        ).value;
+        if (mode === "existing") {
+            const dest = destCombo ? destCombo.getValue() : { id: null, name: null };
+            if (!dest.id) {
+                e.preventDefault();
+                errorEl.textContent = "Pick a destination playlist.";
+                errorEl.style.display = "block";
+                return;
+            }
+            document.getElementById("dest-playlist-id").value = dest.id;
+            document.getElementById("dest-playlist-name").value = dest.name;
+        } else {
+            const name = document.getElementById("dest-new-name").value.trim();
+            if (!name) {
+                e.preventDefault();
+                errorEl.textContent = "Enter a name for the new playlist.";
+                errorEl.style.display = "block";
+                return;
+            }
+        }
+        errorEl.style.display = "none";
+    });
+</script>
+{% endif %} {% endblock %}

@@ -1,0 +1,9 @@
+{% extends "base.html" %} {% block title %}Done - Rotation{%
+endblock %} {% block content %}
+<h1>Done</h1>
+<p>
+    Added {{ added }} track{{ 's' if added != 1 else '' }} to "{{ playlist_name
+    }}"{% if skipped %} ({{ skipped }} already there, skipped){% endif %}.
+</p>
+<p><a class="button" href="{{ url_for('playlist_search_picker') }}">Back</a></p>
+{% endblock %}
