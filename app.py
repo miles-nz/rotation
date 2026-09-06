@@ -1234,7 +1234,7 @@ def most_played_scan():
         result_url=url_for("most_played_scan_result"),
         back_url=url_for("most_played_picker"),
         heading="Looking up your most played…",
-        description="Fetching your top scrobbles from Last.fm, then resolving each one on Spotify for filtering. If you've added conditions, it keeps paging further into your scrobble history until enough results match (or gives up after a while). This can take a minute or two the first time - repeat runs reuse what's already resolved.",
+        description="Fetching your top scrobbles from Last.fm, then resolving each one on Spotify for filtering. If you've added conditions, it keeps paging further into your scrobble history until enough results match (or gives up after a while). Filtering by First Played also builds your full listening history index the first time you use it, which can take several minutes on its own - both only happen once, since everything's cached for next time.",
     )
 
 

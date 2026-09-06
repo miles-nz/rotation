@@ -64,6 +64,11 @@
     <p class="hint" id="switch-hint" style="display: none">
         Switching type clears the conditions below.
     </p>
+    <p class="hint" id="first-played-hint" style="display: none">
+        Filtering by First Played builds your full listening history index
+        the first time you use it - this can take several minutes, but
+        only happens once (it stays cached and updates quickly after that).
+    </p>
     <div id="criteria-list"></div>
     <p>
         <button class="button secondary" id="add-criteria-btn" type="button">
@@ -89,6 +94,11 @@
         };
     }
 
+    function updateFirstPlayedHint() {
+        document.getElementById("first-played-hint").style.display =
+            currentType === "track" ? "block" : "none";
+    }
+
     let currentType = "track";
     let spec = specFor(currentType);
     let criteriaRowManager = buildCriteriaListBuilder(
@@ -97,6 +107,7 @@
         spec.fieldOrder,
     );
     criteriaRowManager.reset(null);
+    updateFirstPlayedHint();
 
     document
         .getElementById("add-criteria-btn")
@@ -114,6 +125,7 @@
                 spec.fieldOrder,
             );
             criteriaRowManager.reset(null);
+            updateFirstPlayedHint();
             document.getElementById("switch-hint").style.display = "block";
         });
     });

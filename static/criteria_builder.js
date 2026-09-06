@@ -17,6 +17,7 @@ const FIELD_LABELS = {
     followers: "Followers",
     album_name: "Album name",
     artist_name: "Artist name",
+    first_scrobbled: "First played",
 };
 
 const OPERATOR_LABELS = {
@@ -162,6 +163,15 @@ function buildCriteriaBuilder(container, fieldOperators, fieldOrder, initial) {
                 select.appendChild(opt);
             });
             valueInputs.appendChild(select);
+            return;
+        }
+
+        if (field === "first_scrobbled") {
+            const input1 = document.createElement("input");
+            input1.type = "date";
+            input1.className = "value-input";
+            if (value) input1.value = value;
+            valueInputs.appendChild(input1);
             return;
         }
 

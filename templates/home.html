@@ -2,12 +2,18 @@
 {% block title %}Rotation{% endblock %}
 {% block nav %}{% endblock %}
 {% block extra_style %}
-    .function-card { border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin: 0.75rem 0; }
-    .function-link { text-decoration: none; color: inherit; display: block; }
-    .function-link strong { display: block; font-size: 1.1rem; margin-bottom: 0.25rem; color: var(--accent); }
-    .function-icon { margin-right: 0.4rem; display: inline-flex; vertical-align: -4px; }
-    .function-icon svg { width: 20px; height: 20px; }
-  .testing-heading { margin: 1.5rem 0 0; padding-top: 1rem; border-top: 1px solid var(--border); font-size: 0.95rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .section-heading { margin: 1.5rem 0 0; padding-top: 1rem; border-top: 1px solid var(--border); font-size: 0.95rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .function-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr)); gap: 0.75rem; margin: 0.75rem 0; }
+  .function-tile {
+    aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 0.5rem; text-align: center; text-decoration: none; color: inherit;
+    border: 1px solid var(--border); border-radius: 10px; padding: 0.5rem;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  .function-tile:hover, .function-tile:focus-visible { border-color: var(--tile-accent, var(--accent)); background: var(--hover-bg); }
+  .function-tile-icon { display: inline-flex; color: var(--tile-accent, var(--accent)); }
+  .function-tile-icon svg { width: 28px; height: 28px; }
+  .function-tile-label { font-size: 0.9rem; font-weight: 600; line-height: 1.2; }
 {% endblock %}
 {% block content %}
   <h1>Rotation</h1>
@@ -37,82 +43,54 @@
 
     <p>Choose a function:</p>
 
-    <div class="function-card">
-      <a class="function-link" href="{{ url_for('liked_songs_sync') }}">
-        <strong><span class="function-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9.5a5.5 5.5 0 0 1 9.591-3.676.56.56 0 0 0 .818 0A5.49 5.49 0 0 1 22 9.5c0 2.29-1.5 4-3 5.5l-5.492 5.313a2 2 0 0 1-3 .019L5 15c-1.5-1.5-3-3.2-3-5.5" /></svg></span>Liked Songs Sync</strong>
-        <span class="hint">Keep Liked Songs in sync with the union of two playlists</span>
+    <div class="function-grid">
+      <a class="function-tile" href="{{ url_for('liked_songs_sync') }}" title="Keep Liked Songs in sync with the union of two playlists">
+        <span class="function-tile-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9.5a5.5 5.5 0 0 1 9.591-3.676.56.56 0 0 0 .818 0A5.49 5.49 0 0 1 22 9.5c0 2.29-1.5 4-3 5.5l-5.492 5.313a2 2 0 0 1-3 .019L5 15c-1.5-1.5-3-3.2-3-5.5" /></svg></span>
+        <span class="function-tile-label">Liked Songs Sync</span>
+      </a>
+      <a class="function-tile" href="{{ url_for('duplicates_picker') }}" title="Find tracks that appear in more than one playlist and remove the extras">
+        <span class="function-tile-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" x2="18" y1="15" y2="15" /><rect width="14" height="14" x="8" y="8" rx="2" ry="2" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" /></svg></span>
+        <span class="function-tile-label">Duplicate Finder</span>
+      </a>
+      <a class="function-tile" href="{{ url_for('playlist_filter_picker') }}" title="Find tracks matching a condition and add them to another playlist">
+        <span class="function-tile-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13.354 3H3a1 1 0 0 0-.742 1.67l7.225 7.989A2 2 0 0 1 10 14v6a1 1 0 0 0 .553.895l2 1A1 1 0 0 0 14 21v-7a2 2 0 0 1 .517-1.341l1.218-1.348" /><path d="M16 6h6" /><path d="M19 3v6" /></svg></span>
+        <span class="function-tile-label">Playlist Filter</span>
+      </a>
+      <a class="function-tile" href="{{ url_for('playlist_cleanup_picker') }}" title="Remove tracks from a playlist that don't match a rule, like an added date cutoff">
+        <span class="function-tile-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /><line x1="10" x2="10" y1="11" y2="17" /><line x1="14" x2="14" y1="11" y2="17" /></svg></span>
+        <span class="function-tile-label">Playlist Cleanup</span>
+      </a>
+      <a class="function-tile" href="{{ url_for('playlist_diff_picker') }}" title="Find tracks in one or more playlists that are missing from other playlists, and add the ones you want">
+        <span class="function-tile-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 2 2 4-4" /><path d="m3 7 2 2 4-4" /><path d="M13 6h8" /><path d="M13 12h8" /><path d="M13 18h8" /></svg></span>
+        <span class="function-tile-label">Playlist Diff</span>
+      </a>
+      <a class="function-tile" href="{{ url_for('playlist_search_picker') }}" title="Search playlists with any combination of conditions and exclusions - read-only, nothing gets added or removed">
+        <span class="function-tile-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 21-4.34-4.34" /><circle cx="11" cy="11" r="8" /></svg></span>
+        <span class="function-tile-label">Playlist Search</span>
+      </a>
+      <a class="function-tile" href="{{ url_for('playlist_prepend_picker') }}" title="Add one playlist's tracks to the top of another, in order, skipping duplicates">
+        <span class="function-tile-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14" /><path d="m19 12-7-7-7 7" /></svg></span>
+        <span class="function-tile-label">Playlist Prepend</span>
+      </a>
+      <a class="function-tile" href="{{ url_for('cascade_picker') }}" title="Chain functions together, fetching each playlist only once">
+        <span class="function-tile-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="8" height="8" rx="2" /><rect x="14" y="9" width="8" height="8" rx="2" /><path d="M10 11h4" /></svg></span>
+        <span class="function-tile-label">Cascade</span>
+      </a>
+      <a class="function-tile" href="{{ url_for('most_played_picker') }}" title="See your most-scrobbled tracks, artists, or albums from Last.fm, filterable and enriched with Spotify metadata">
+        <span class="function-tile-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18" /><path d="M7 16l4-6 3 3 5-7" /></svg></span>
+        <span class="function-tile-label">Most Played</span>
       </a>
     </div>
 
-    <div class="function-card">
-      <a class="function-link" href="{{ url_for('duplicates_picker') }}">
-        <strong><span class="function-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" x2="18" y1="15" y2="15" /><rect width="14" height="14" x="8" y="8" rx="2" ry="2" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" /></svg></span>Duplicate Finder</strong>
-        <span class="hint">Find tracks that appear in more than one playlist and remove the extras</span>
+    <h2 class="section-heading">Testing</h2>
+    <div class="function-grid">
+      <a class="function-tile" href="{{ url_for('search_page') }}" title="Search Spotify's catalog and preview any track">
+        <span class="function-tile-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 21-4.34-4.34" /><circle cx="11" cy="11" r="8" /></svg></span>
+        <span class="function-tile-label">Track Search</span>
       </a>
-    </div>
-
-    <div class="function-card">
-      <a class="function-link" href="{{ url_for('playlist_filter_picker') }}">
-        <strong><span class="function-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13.354 3H3a1 1 0 0 0-.742 1.67l7.225 7.989A2 2 0 0 1 10 14v6a1 1 0 0 0 .553.895l2 1A1 1 0 0 0 14 21v-7a2 2 0 0 1 .517-1.341l1.218-1.348" /><path d="M16 6h6" /><path d="M19 3v6" /></svg></span>Playlist Filter</strong>
-        <span class="hint">Find tracks matching a condition and add them to another playlist</span>
-      </a>
-    </div>
-
-    <div class="function-card">
-      <a class="function-link" href="{{ url_for('playlist_cleanup_picker') }}">
-        <strong><span class="function-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /><line x1="10" x2="10" y1="11" y2="17" /><line x1="14" x2="14" y1="11" y2="17" /></svg></span>Playlist Cleanup</strong>
-        <span class="hint">Remove tracks from a playlist that don't match a rule, like an added date cutoff</span>
-      </a>
-    </div>
-
-    <div class="function-card">
-      <a class="function-link" href="{{ url_for('playlist_diff_picker') }}">
-        <strong><span class="function-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 2 2 4-4" /><path d="m3 7 2 2 4-4" /><path d="M13 6h8" /><path d="M13 12h8" /><path d="M13 18h8" /></svg></span>Playlist Diff</strong>
-        <span class="hint">Find tracks in one or more playlists that are missing from other playlists, and add the ones you want</span>
-      </a>
-    </div>
-
-    <div class="function-card">
-      <a class="function-link" href="{{ url_for('playlist_search_picker') }}">
-        <strong><span class="function-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 21-4.34-4.34" /><circle cx="11" cy="11" r="8" /></svg></span>Playlist Search</strong>
-        <span class="hint">Search playlists with any combination of conditions and exclusions - read-only, nothing gets added or removed</span>
-      </a>
-    </div>
-
-    <div class="function-card">
-      <a class="function-link" href="{{ url_for('playlist_prepend_picker') }}">
-        <strong><span class="function-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14" /><path d="m19 12-7-7-7 7" /></svg></span>Playlist Prepend</strong>
-        <span class="hint">Add one playlist's tracks to the top of another, in order, skipping duplicates</span>
-      </a>
-    </div>
-
-    <div class="function-card">
-      <a class="function-link" href="{{ url_for('cascade_picker') }}">
-        <strong><span class="function-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="8" height="8" rx="2" /><rect x="14" y="9" width="8" height="8" rx="2" /><path d="M10 11h4" /></svg></span>Cascade</strong>
-        <span class="hint">Chain functions together, fetching each playlist only once</span>
-      </a>
-    </div>
-
-    <div class="function-card">
-      <a class="function-link" href="{{ url_for('most_played_picker') }}">
-        <strong><span class="function-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18" /><path d="M7 16l4-6 3 3 5-7" /></svg></span>Most Played</strong>
-        <span class="hint">See your most-scrobbled tracks, artists, or albums from Last.fm, filterable and enriched with Spotify metadata</span>
-      </a>
-    </div>
-
-    <h2 class="testing-heading">Testing</h2>
-
-    <div class="function-card">
-      <a class="function-link" href="{{ url_for('search_page') }}">
-        <strong><span class="function-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 21-4.34-4.34" /><circle cx="11" cy="11" r="8" /></svg></span>Track Search</strong>
-        <span class="hint">Search Spotify's catalog and preview any track</span>
-      </a>
-    </div>
-
-    <div class="function-card">
-      <a class="function-link" href="{{ url_for('all_playlists_page') }}">
-        <strong><span class="function-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15V6" /><path d="M18.5 18a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z" /><path d="M12 6H3" /><path d="M16 10H3" /><path d="M12 14H3" /></svg></span>All Playlists</strong>
-        <span class="hint">List every playlist with click-to-copy ID and name</span>
+      <a class="function-tile" href="{{ url_for('all_playlists_page') }}" title="List every playlist with click-to-copy ID and name">
+        <span class="function-tile-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15V6" /><path d="M18.5 18a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z" /><path d="M12 6H3" /><path d="M16 10H3" /><path d="M12 14H3" /></svg></span>
+        <span class="function-tile-label">All Playlists</span>
       </a>
     </div>
   {% endif %}

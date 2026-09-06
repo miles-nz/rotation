@@ -4,12 +4,14 @@ import logging
 import re
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 
 from spotipy import Spotify
 
 from core.cancellation import CancelCheck, check_cancelled
 import lastfm.lastfm_client as lastfm_client_module
 import lastfm.resolve_cache as resolve_cache
+import lastfm.scrobble_history as scrobble_history
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +22,7 @@ logger = logging.getLogger(__name__)
 FIELD_OPERATORS = {
     "track": {
         "release_year": ["is", "before", "after", "between"],
+        "first_scrobbled": ["before", "after"],
         "popularity": ["at_least", "at_most"],
         "playcount": ["at_least", "at_most"],
         "explicit": ["is"],
@@ -126,6 +129,16 @@ def matches_criterion(item: dict, field: str, operator: str, value: str, value2:
             target2 = int(value2)
             lo, hi = sorted((target, target2))
             return lo <= year <= hi
+        return False
+    if field == "first_scrobbled":
+        ts = item.get("first_scrobbled")
+        if ts is None:
+            return False
+        target = int(datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp())
+        if operator == "before":
+            return ts < target
+        if operator == "after":
+            return ts > target
         return False
     if field in ("popularity", "playcount", "followers"):
         item_value = item.get(field)
@@ -423,6 +436,15 @@ def _find_most_played_tracks(
 ) -> dict:
     cache = resolve_cache.load("track")
 
+    # The scrobble-history index (for the first_scrobbled criterion) is
+    # only built/updated when actually needed - a scan without that
+    # criterion never touches it, so nobody pays for a history sync
+    # unless they're filtering on it. sync() is a one-time ~708-page walk
+    # the first time it's ever called, then a cheap incremental top-up on
+    # every call after (see lastfm/scrobble_history.py).
+    needs_history = any(c["field"] == "first_scrobbled" for c in criteria)
+    history = scrobble_history.sync(cancel_check) if needs_history else scrobble_history.load()
+
     def build_page_entries(sp: Spotify, top: list[dict], cancel_check: CancelCheck | None):
         resolved_pairs = _resolve_generic(
             sp,
@@ -443,6 +465,9 @@ def _find_most_played_tracks(
         entries = []
         unresolved = 0
         for top_item, resolved in resolved_pairs:
+            first_scrobbled_ts = scrobble_history.first_scrobbled(
+                history, top_item["artist"], top_item["name"]
+            )
             if resolved.get("found"):
                 entries.append(
                     {
@@ -457,6 +482,7 @@ def _find_most_played_tracks(
                         "playcount": top_item["playcount"],
                         "rank": top_item["rank"],
                         "image_url": resolved.get("image_url"),
+                        "first_scrobbled": first_scrobbled_ts,
                         "resolved": True,
                     }
                 )
@@ -475,6 +501,7 @@ def _find_most_played_tracks(
                         "playcount": top_item["playcount"],
                         "rank": top_item["rank"],
                         "image_url": None,
+                        "first_scrobbled": first_scrobbled_ts,
                         "resolved": False,
                     }
                 )

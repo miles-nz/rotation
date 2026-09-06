@@ -133,6 +133,37 @@ def _top_tag_names(payload: dict, limit: int) -> list[str]:
     return [t["name"] for t in tags][:limit]
 
 
+def get_recent_tracks(
+    username: str | None = None, limit: int = 200, page: int = 1, from_ts: int | None = None
+) -> tuple[list[dict], dict]:
+    """One page of scrobble history, newest first. Returns
+    ([{"artist", "name", "timestamp"}, ...], {"page", "total_pages"}).
+    Skips the in-progress "now playing" entry, if present - it has no
+    "date" yet since it hasn't finished being scrobbled. from_ts, if
+    given, only returns scrobbles after that unix timestamp (for
+    incremental syncs - avoids re-walking already-seen history).
+    """
+    params = {"user": username or _username(), "limit": limit, "page": page}
+    if from_ts is not None:
+        params["from"] = from_ts
+    payload = _get("user.getrecenttracks", **params)
+    recenttracks = payload.get("recenttracks", {})
+    attr = recenttracks.get("@attr", {})
+    tracks = [
+        {
+            "artist": t["artist"]["#text"],
+            "name": t["name"],
+            "timestamp": int(t["date"]["uts"]),
+        }
+        for t in _as_list(recenttracks.get("track"))
+        if t.get("date")
+    ]
+    return tracks, {
+        "page": int(attr.get("page", page)),
+        "total_pages": int(attr.get("totalPages", 0)),
+    }
+
+
 def get_track_tags(artist: str, track: str, limit: int = 5) -> list[str]:
     """User-submitted tags for a track, most-applied first - Last.fm's
     closest thing to a genre for a track that couldn't be matched on

@@ -121,6 +121,7 @@ table.results-table { width: 100%; border-collapse: collapse; font-size: 0.9rem;
             { key: "genres", label: "Genres", sortable: false },
             { key: "popularity", label: "Popularity", sortable: true },
             { key: "playcount", label: "Play count", sortable: true },
+            { key: "first_scrobbled", label: "First played", sortable: true },
         ],
         album: [
             { key: "artists", label: "Artist", sortable: true },
@@ -152,6 +153,11 @@ table.results-table { width: 100%; border-collapse: collapse; font-size: 0.9rem;
 
     function cellValue(item, key) {
         if (key === "genres") return (item.genres || []).join(", ");
+        if (key === "first_scrobbled") {
+            return item.first_scrobbled
+                ? new Date(item.first_scrobbled * 1000).toISOString().slice(0, 10)
+                : "";
+        }
         return item[key];
     }
 
