@@ -18,6 +18,7 @@ const FIELD_LABELS = {
     album_name: "Album name",
     artist_name: "Artist name",
     first_scrobbled: "First played",
+    last_scrobbled: "Last played",
 };
 
 const OPERATOR_LABELS = {
@@ -166,7 +167,7 @@ function buildCriteriaBuilder(container, fieldOperators, fieldOrder, initial) {
             return;
         }
 
-        if (field === "first_scrobbled") {
+        if (field === "first_scrobbled" || field === "last_scrobbled") {
             const input1 = document.createElement("input");
             input1.type = "date";
             input1.className = "value-input";

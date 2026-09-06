@@ -122,6 +122,7 @@ table.results-table { width: 100%; border-collapse: collapse; font-size: 0.9rem;
             { key: "popularity", label: "Popularity", sortable: true },
             { key: "playcount", label: "Play count", sortable: true },
             { key: "first_scrobbled", label: "First played", sortable: true },
+            { key: "last_scrobbled", label: "Last played", sortable: true },
         ],
         album: [
             { key: "artists", label: "Artist", sortable: true },
@@ -153,10 +154,8 @@ table.results-table { width: 100%; border-collapse: collapse; font-size: 0.9rem;
 
     function cellValue(item, key) {
         if (key === "genres") return (item.genres || []).join(", ");
-        if (key === "first_scrobbled") {
-            return item.first_scrobbled
-                ? new Date(item.first_scrobbled * 1000).toISOString().slice(0, 10)
-                : "";
+        if (key === "first_scrobbled" || key === "last_scrobbled") {
+            return item[key] ? new Date(item[key] * 1000).toISOString().slice(0, 10) : "";
         }
         return item[key];
     }

@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 # different file - this has different lifecycle semantics (a sync
 # watermark plus a full-history walk, not a pure memoized lookup), so it's
 # a dedicated module rather than another resolve_cache entity type.
-_PATH = DATA_DIR / ".lastfm_cache" / "first_scrobbled.json"
+_PATH = DATA_DIR / ".lastfm_cache" / "scrobble_dates.json"
 
 # One request per page, paced with this delay between requests, to stay
 # comfortably under Last.fm's commonly-observed ~5 req/s per-IP limit
@@ -44,30 +44,35 @@ def _key(artist: str, name: str) -> str:
     return f"{artist.strip().lower()}||{name.strip().lower()}"
 
 
-def first_scrobbled(data: dict, artist: str, name: str) -> int | None:
-    """Looks up a track's first-scrobbled unix timestamp in an
-    already-loaded index (see load()). None if never scrobbled or not yet
-    indexed (i.e. sync() hasn't covered it - most likely nobody has ever
-    called sync() at all)."""
-    return data["tracks"].get(_key(artist, name))
+def lookup(data: dict, artist: str, name: str) -> dict:
+    """Looks up a track's {"first", "last"} unix timestamps in an
+    already-loaded index (see load()). Empty dict if never scrobbled or
+    not yet indexed (i.e. sync() hasn't covered it - most likely nobody
+    has ever called sync() at all) - callers should use .get("first") /
+    .get("last"), which are then naturally None."""
+    return data["tracks"].get(_key(artist, name), {})
 
 
 def sync(cancel_check: CancelCheck | None = None) -> dict:
     """Backfills (first call) or incrementally updates (every call after)
-    the first-scrobbled index by walking user.getRecentTracks. Returns the
+    the scrobble-dates index by walking user.getRecentTracks. Returns the
     updated (and already-saved) index dict - same shape as load().
 
     Walks pages newest-to-oldest starting from page 1, passing
     from_ts=synced_through+1 on an incremental run so only scrobbles since
-    last time are fetched at all. For every scrobble seen, reduces via
-    tracks[key] = min(tracks.get(key, inf), timestamp) - not "skip if
+    last time are fetched at all. For every scrobble seen, each track's
+    "first"/"last" are reduced via min()/max() across every page
+    (including ones where the track already appeared) - not "skip if
     already present". This is deliberate: walking newest-to-oldest means
     the first time a track is *encountered* is its most recent play, not
-    its first - only an unconditional min-reduce across every page
-    (including ones where the track already appeared) finds the true
-    earliest. The same min-reduce is correct for incremental runs too
-    (everything fetched is guaranteed newer than what's indexed, so
-    min() leaves existing entries untouched) - one code path handles both.
+    its first, so only an unconditional min() finds the true earliest;
+    max() is the mirror of that same logic for the most recent play (and
+    happens to equal "whichever occurrence was encountered first" in this
+    newest-to-oldest walk, without needing that as a separate special
+    case). Both reductions are correct for incremental runs too
+    (everything fetched is guaranteed more recent than what's indexed, so
+    min() leaves "first" untouched while max() naturally advances "last")
+    - one code path handles backfill and incremental alike.
 
     Stops at an empty page (exhausted available history) or a
     cancellation. Saves after every page, so a cancelled or interrupted
@@ -87,8 +92,9 @@ def sync(cancel_check: CancelCheck | None = None) -> dict:
             break
         for t in page_tracks:
             key = _key(t["artist"], t["name"])
-            existing = tracks.get(key)
-            tracks[key] = t["timestamp"] if existing is None else min(existing, t["timestamp"])
+            entry = tracks.setdefault(key, {})
+            entry["first"] = t["timestamp"] if "first" not in entry else min(entry["first"], t["timestamp"])
+            entry["last"] = t["timestamp"] if "last" not in entry else max(entry["last"], t["timestamp"])
             if newest_seen is None or t["timestamp"] > newest_seen:
                 newest_seen = t["timestamp"]
 
