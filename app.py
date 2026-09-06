@@ -116,7 +116,7 @@ _diff_job = BackgroundJob(["playlists.playlist_diff", "app"])
 _search_job = BackgroundJob(["playlists.playlist_search", "app"])
 _prepend_job = BackgroundJob(["playlists.playlist_prepend", "app"])
 _cascade_job = BackgroundJob(["playlists.playlist_cache", "app"])
-_most_played_job = BackgroundJob(["lastfm.most_played", "app"])
+_most_played_job = BackgroundJob(["lastfm.most_played", "lastfm.scrobble_history", "app"])
 _cascade_run: cascade_module.CascadeRun | None = None
 
 # Gunicorn imports this file as the "app" module (not "__main__"), so it
