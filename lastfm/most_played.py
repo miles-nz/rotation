@@ -59,8 +59,12 @@ MAX_CONCURRENT_RESOLVES = 5
 # of 200). Instead, keep paging further into scrobble history until `count`
 # matches are found, up to this many multiples of `count` items scanned, so
 # a very restrictive filter gives up instead of scanning someone's entire
-# multi-year history looking for matches that don't exist.
-MAX_SCAN_MULTIPLIER = 20
+# multi-year history looking for matches that don't exist. Scales with
+# count, so a large count + a very restrictive filter can mean a genuinely
+# long scan (and more Spotify resolve calls, though those are cached
+# permanently once made) - that's the tradeoff for reaching deeper into a
+# smaller count's history too, e.g. count=50 now reaches 2000 (50*40).
+MAX_SCAN_MULTIPLIER = 40
 
 
 def _parse_year(release_date: str | None) -> int | None:
