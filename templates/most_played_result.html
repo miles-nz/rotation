@@ -3,11 +3,13 @@
 {% block extra_style %}
 .results-table-wrap { overflow-x: auto; margin: 1rem 0; }
 table.results-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-.results-table th, .results-table td { padding: 0.5rem 0.6rem; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.results-table th, .results-table td { padding: 0.5rem 0.6rem; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .results-table th { color: var(--muted); font-weight: 600; user-select: none; }
 .results-table th.sortable { cursor: pointer; }
 .results-table th.sortable:hover { color: var(--text); }
 .results-table .sort-arrow { display: inline-block; width: 0.9em; opacity: 0.7; }
+.col-resize-handle { position: absolute; top: 0; right: 0; width: 6px; height: 100%; cursor: col-resize; z-index: 2; }
+.col-resize-handle:hover { background: var(--border-light); }
 .results-table tbody tr:hover { background: var(--hover-bg); }
 .explicit-badge { display: inline-block; font-size: 0.65rem; line-height: 1; border: 1px solid var(--muted); border-radius: 3px; padding: 0.15rem 0.25rem; margin-left: 0.4rem; color: var(--muted); vertical-align: middle; }
 .checkbox-col { width: 1.6rem; }
@@ -108,6 +110,7 @@ table.results-table { width: 100%; border-collapse: collapse; font-size: 0.9rem;
 </form>
 
 <script src="{{ url_for('static', filename='playlist_picker.js') }}"></script>
+<script src="{{ url_for('static', filename='resizable_columns.js') }}"></script>
 <script>
     const ENTITY_TYPE = {{ entity_type | tojson }};
     const RESULTS = {{ results | tojson }};
@@ -264,6 +267,9 @@ table.results-table { width: 100%; border-collapse: collapse; font-size: 0.9rem;
     }
 
     renderHead();
+    makeColumnsResizable(document.getElementById("results-table"), {
+        storageKey: `resizable-cols:most-played:${ENTITY_TYPE}`,
+    });
     renderRows();
     updateSortArrows();
 
