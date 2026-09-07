@@ -411,8 +411,15 @@ def _paginated_scan(
     unresolved_count = 0
     scanned = 0
     scan_cap = count * MAX_SCAN_MULTIPLIER
+    max_pages = MAX_SCAN_MULTIPLIER
     page = 1
     while len(matches) < count and scanned < scan_cap:
+        # Plain (untagged) log line, deliberately separate from the
+        # "matches" progress bar below - that bar's total is the target
+        # match count, not the page count, so it never surfaces which raw
+        # Last.fm page is currently being fetched. Same rationale as the
+        # equivalent line in scrobble_history.sync().
+        logger.info("most played scan: fetching Last.fm page %d/%d", page, max_pages)
         top = lastfm_client_module.call_with_retry(
             lambda: fetch_page(period=period, limit=count, page=page),
             description=f"most played scan: page {page}",
