@@ -4,8 +4,6 @@ import json
 import logging
 import time
 
-import requests
-
 from core.cancellation import CancelCheck, check_cancelled
 from core.paths import DATA_DIR
 import lastfm.lastfm_client as lastfm_client_module
@@ -160,39 +158,9 @@ def sync(cancel_check: CancelCheck | None = None) -> dict:
     return data
 
 
-# Last.fm's own server occasionally 500s transiently (seen in practice) -
-# retried with escalating backoff, unlike 429 (which retries indefinitely
-# since it's expected to self-resolve quickly), a persistent 5xx outage
-# shouldn't hang a sync forever.
-_MAX_SERVER_ERROR_RETRIES = 5
-
-
 def _get_page_with_backoff(page: int, from_ts: int | None, cancel_check: CancelCheck | None):
-    server_error_attempts = 0
-    while True:
-        try:
-            return lastfm_client_module.get_recent_tracks(
-                limit=_PAGE_LIMIT, page=page, from_ts=from_ts
-            )
-        except requests.exceptions.HTTPError as exc:
-            status = exc.response.status_code if exc.response is not None else None
-            if status == 429:
-                logger.warning("scrobble history: rate limited, backing off")
-                check_cancelled(cancel_check)
-                time.sleep(5)
-                continue
-            if status is not None and 500 <= status < 600 and server_error_attempts < _MAX_SERVER_ERROR_RETRIES:
-                server_error_attempts += 1
-                wait = min(5 * server_error_attempts, 30)
-                logger.warning(
-                    "scrobble history: Last.fm returned %d on page %d, retrying (%d/%d) in %ds",
-                    status,
-                    page,
-                    server_error_attempts,
-                    _MAX_SERVER_ERROR_RETRIES,
-                    wait,
-                )
-                check_cancelled(cancel_check)
-                time.sleep(wait)
-                continue
-            raise
+    return lastfm_client_module.call_with_retry(
+        lambda: lastfm_client_module.get_recent_tracks(limit=_PAGE_LIMIT, page=page, from_ts=from_ts),
+        description=f"scrobble history: page {page}",
+        cancel_check=cancel_check,
+    )

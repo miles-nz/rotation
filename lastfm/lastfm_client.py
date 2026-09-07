@@ -1,13 +1,60 @@
 from __future__ import annotations
 
+import logging
 import os
+import time
 
 import requests
 from dotenv import load_dotenv
 
+from core.cancellation import CancelCheck, check_cancelled
+
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 API_ROOT = "https://ws.audioscrobbler.com/2.0/"
+
+# Last.fm's own server occasionally 500s transiently (seen in practice) -
+# retried with escalating backoff, unlike 429 (which retries indefinitely
+# since it's expected to self-resolve quickly), a persistent 5xx outage
+# shouldn't hang a caller forever.
+_MAX_SERVER_ERROR_RETRIES = 5
+
+
+def call_with_retry(fn, description: str, cancel_check: CancelCheck | None = None):
+    """Calls a zero-arg Last.fm API function, retrying on transient HTTP
+    failures instead of letting them abort whatever multi-page operation is
+    in progress (a paginated scan/sync loses all its progress otherwise).
+    description is used only for logging (e.g. "page 4") to identify which
+    call is being retried.
+    """
+    server_error_attempts = 0
+    while True:
+        try:
+            return fn()
+        except requests.exceptions.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            if status == 429:
+                logger.warning("%s: rate limited, backing off", description)
+                check_cancelled(cancel_check)
+                time.sleep(5)
+                continue
+            if status is not None and 500 <= status < 600 and server_error_attempts < _MAX_SERVER_ERROR_RETRIES:
+                server_error_attempts += 1
+                wait = min(5 * server_error_attempts, 30)
+                logger.warning(
+                    "%s: Last.fm returned %d, retrying (%d/%d) in %ds",
+                    description,
+                    status,
+                    server_error_attempts,
+                    _MAX_SERVER_ERROR_RETRIES,
+                    wait,
+                )
+                check_cancelled(cancel_check)
+                time.sleep(wait)
+                continue
+            raise
 
 
 def _api_key() -> str:

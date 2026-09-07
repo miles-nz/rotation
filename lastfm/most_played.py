@@ -413,7 +413,11 @@ def _paginated_scan(
     scan_cap = count * MAX_SCAN_MULTIPLIER
     page = 1
     while len(matches) < count and scanned < scan_cap:
-        top = fetch_page(period=period, limit=count, page=page)
+        top = lastfm_client_module.call_with_retry(
+            lambda: fetch_page(period=period, limit=count, page=page),
+            description=f"most played scan: page {page}",
+            cancel_check=cancel_check,
+        )
         if not top:
             break
         entries, page_unresolved = build_page_entries(sp, top, cancel_check)
