@@ -115,8 +115,10 @@ def find_matches_from_tracks(
     with already-fetched tracks. criteria: [{"field", "operator", "value",
     "value2"}, ...] - a track must match every criterion.
 
-    Returns matching tracks, deduped by uri across source playlists, sorted
-    by artist/name: [{"uri", "name", "artists"}]
+    Returns matching tracks, deduped by uri across source playlists and
+    ordered by source playlist: all matches from the first playlist (in
+    that playlist's order), then any new matches from the second playlist,
+    and so on: [{"uri", "name", "artists"}]
     """
     seen: dict[str, dict] = {}
 
@@ -131,7 +133,7 @@ def find_matches_from_tracks(
                     "artists": track["artists"],
                 }
 
-    matches = sorted(seen.values(), key=lambda t: (t["artists"].lower(), t["name"].lower()))
+    matches = list(seen.values())
     logger.info(
         "found %d matching track(s) across %d source playlist(s)",
         len(matches),
