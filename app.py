@@ -353,6 +353,11 @@ def _cascade_step_view(sp: Spotify, run: cascade_module.CascadeRun):
     raise ValueError(f"unknown step type {step_type!r}")
 
 
+@app.route("/health")
+def health():
+    return "ok", 200
+
+
 @app.route("/")
 def home():
     if not _credentials_configured():
