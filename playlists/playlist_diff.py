@@ -82,13 +82,15 @@ def find_missing(
     return {"missing": missing, "targets": [{"id": t["id"], "name": t["name"]} for t in targets]}
 
 
-def add_to_playlists(sp: Spotify, additions: list[dict], add_tracks=None) -> dict[str, int]:
+def add_to_playlists(sp: Spotify, additions: list[dict], add_tracks=None) -> dict[str, dict]:
     """additions: [{"playlist_id", "uri"}, ...]. add_tracks(playlist_id, uris)
     defaults to a live Spotify fetch of existing tracks; callers with a
     cache of existing playlist state (e.g. cascade) can pass their own.
 
-    Adds each uri to its playlist (skipping ones already present). Returns
-    {playlist_id: added_count}, omitting playlists with nothing added.
+    Adds each uri to its playlist (skipping ones already present, and any
+    local file - the Web API can't add those to a playlist at all). Returns
+    {playlist_id: {"added": n, "local_skipped": n}}, omitting playlists with
+    nothing added and nothing local-skipped.
     """
     add_tracks = add_tracks or (
         lambda playlist_id, uris: playlist_filter.add_tracks_to_playlist(sp, playlist_id, uris)
@@ -98,9 +100,9 @@ def add_to_playlists(sp: Spotify, additions: list[dict], add_tracks=None) -> dic
     for addition in additions:
         by_playlist.setdefault(addition["playlist_id"], []).append(addition["uri"])
 
-    added_counts: dict[str, int] = {}
+    added_counts: dict[str, dict] = {}
     for playlist_id, uris in by_playlist.items():
-        added, _skipped = add_tracks(playlist_id, uris)
-        if added:
-            added_counts[playlist_id] = added
+        added, _skipped, local_skipped = add_tracks(playlist_id, uris)
+        if added or local_skipped:
+            added_counts[playlist_id] = {"added": added, "local_skipped": local_skipped}
     return added_counts

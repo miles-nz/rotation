@@ -9,7 +9,10 @@ endblock %} {% block content %}
     {% for entry in added_summary %}
     <li>
         {{ entry.added }} track{{ 's' if entry.added != 1 else '' }} to "{{
-        entry.name }}"
+        entry.name }}"{% if entry.local_skipped %} ({{ entry.local_skipped }}
+        local file{{ 's' if entry.local_skipped != 1 else '' }} skipped -
+        Spotify's API doesn't support adding local files to a playlist){%
+        endif %}
     </li>
     {% endfor %}
 </ul>

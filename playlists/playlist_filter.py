@@ -30,6 +30,13 @@ FIELD_OPERATORS = {
 
 _UNIT_DAYS = {"days": 1, "weeks": 7, "months": 30}
 
+# Local files are never scored/tagged by Spotify's catalog, so these fields
+# are always None/False for them - never real data. Treating that as "does
+# match" keeps a local track from being auto-flagged for removal by a
+# cleanup rule it has no real basis to fail, while still letting it be
+# selected by any other criterion in the same rule (e.g. artist/track_name).
+_SPOTIFY_ONLY_FIELDS = {"popularity", "release_year", "explicit"}
+
 
 def _cutoff_datetime(value: str, unit: str) -> datetime:
     days = int(value) * _UNIT_DAYS[unit]
@@ -57,6 +64,8 @@ def _parse_year(release_date: str | None) -> int | None:
 def matches_criterion(
     track: dict, field: str, operator: str, value: str, value2: str | None
 ) -> bool:
+    if track.get("is_local") and field in _SPOTIFY_ONLY_FIELDS:
+        return True
     if field == "added_date":
         added_dt = _parse_added_at(track.get("added_at"))
         if added_dt is None:
@@ -230,15 +239,23 @@ def add_new_tracks_to_playlist(
     uris: list[str],
     existing_uris,
     track_details: list[dict] | None = None,
-) -> tuple[int, int]:
-    """Adds uris not already in existing_uris. Returns (added, skipped).
+) -> tuple[int, int, int]:
+    """Adds uris not already in existing_uris. Returns (added, skipped,
+    local_skipped).
 
     track_details, when the caller already has full track dicts for the
     uris being added (e.g. cascade, which keeps them in its own playlist
     cache), avoids an extra Spotify lookup when refreshing the on-disk
-    cache afterwards."""
-    to_add = [uri for uri in uris if uri not in existing_uris]
-    skipped = len(uris) - len(to_add)
+    cache afterwards.
+
+    local_skipped counts uris that matched but were never attempted: the
+    Web API has no way to add a local file to a playlist at all (only read,
+    reorder, or remove ones already there), so these are excluded up front
+    rather than sent to Spotify to fail."""
+    not_existing = [uri for uri in uris if uri not in existing_uris]
+    to_add = [uri for uri in not_existing if not uri.startswith("spotify:local:")]
+    local_skipped = len(not_existing) - len(to_add)
+    skipped = len(uris) - len(not_existing)
 
     current_tracks = (
         playlist_cache_module.get_playlist(sp, playlist_id)["tracks"] if to_add else None
@@ -298,10 +315,11 @@ def add_new_tracks_to_playlist(
                 exc_info=True,
             )
 
-    return len(to_add), skipped
+    return len(to_add), skipped, local_skipped
 
 
-def add_tracks_to_playlist(sp: Spotify, playlist_id: str, uris: list[str]) -> tuple[int, int]:
-    """Adds uris not already present in the playlist. Returns (added, skipped)."""
+def add_tracks_to_playlist(sp: Spotify, playlist_id: str, uris: list[str]) -> tuple[int, int, int]:
+    """Adds uris not already present in the playlist. Returns (added, skipped,
+    local_skipped)."""
     existing = get_playlist_track_uris(sp, playlist_id)
     return add_new_tracks_to_playlist(sp, playlist_id, uris, existing)

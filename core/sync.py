@@ -21,6 +21,10 @@ def get_liked_track_uris(
 def compute_diff(
     playlist_uris: set[str], liked_uris: set[str]
 ) -> tuple[set[str], set[str]]:
+    # Local files can't be saved to Liked Songs at all - Spotify doesn't
+    # support it via this API (or even from the desktop client) - so they're
+    # never a candidate to add, regardless of which playlists they're in.
+    playlist_uris = {uri for uri in playlist_uris if not uri.startswith("spotify:local:")}
     to_add = playlist_uris - liked_uris
     to_remove = liked_uris - playlist_uris
     logger.info("diff computed: %d to add, %d to remove", len(to_add), len(to_remove))

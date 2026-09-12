@@ -75,13 +75,14 @@ def _fetch_playlist_tracks(
         for item in results["items"]:
             processed += 1
             track = item.get("track")
-            if track and track.get("uri") and not track.get("is_local"):
+            if track and track.get("uri"):
                 tracks.append(
                     {
                         "uri": track["uri"],
                         "name": track["name"],
                         "artists": ", ".join(a["name"] for a in track["artists"]),
                         "album": (track.get("album") or {}).get("name") or "",
+                        "is_local": bool(track.get("is_local")),
                         "explicit": bool(track.get("explicit")),
                         "popularity": track.get("popularity"),
                         "release_year": _parse_year(
@@ -190,8 +191,13 @@ def track_details_for_uris(sp: Spotify, uris) -> dict[str, dict]:
     dicts - for callers that only have bare uris (e.g. a standalone "add
     tracks" flow) and need full dicts to build the post-add list to pass to
     refresh_after_mutation. added_at is set to now, since that's when this
-    app is adding them."""
-    uris = list(uris)
+    app is adding them.
+
+    Local files can't be looked up this way (sp.tracks only resolves
+    catalog ids) and shouldn't reach this function anyway - the Web API
+    can't add them to a playlist in the first place - so any local uri
+    passed in is silently excluded from the result."""
+    uris = [uri for uri in uris if not uri.startswith("spotify:local:")]
     ids = [uri.split(":")[-1] for uri in uris]
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     details: dict[str, dict] = {}
@@ -204,6 +210,7 @@ def track_details_for_uris(sp: Spotify, uris) -> dict[str, dict]:
                 "name": track["name"],
                 "artists": ", ".join(a["name"] for a in track["artists"]),
                 "album": (track.get("album") or {}).get("name") or "",
+                "is_local": False,
                 "explicit": bool(track.get("explicit")),
                 "popularity": track.get("popularity"),
                 "release_year": _parse_year((track.get("album") or {}).get("release_date")),
@@ -296,7 +303,7 @@ class PlaylistCache:
     a cascade's steps can share one fetch per playlist instead of each step
     re-paging through the same tracks.
 
-    Track dicts: {"uri", "name", "artists", "album", "explicit",
+    Track dicts: {"uri", "name", "artists", "album", "is_local", "explicit",
     "popularity", "release_year", "added_at"} - a superset covering every
     field any of the five functions look at.
     """

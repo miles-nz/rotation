@@ -158,15 +158,20 @@ def apply_step(sp: Spotify, cache: PlaylistCache, step: dict, result: Any, form)
 
         existing_uris = {t["uri"] for t in cache.playlist(playlist_id)["tracks"]}
         track_details = _lookup_tracks(cache, step["playlist_ids"], selected_uris)
-        added, skipped = playlist_filter_module.add_new_tracks_to_playlist(
+        added, skipped, local_skipped = playlist_filter_module.add_new_tracks_to_playlist(
             sp, playlist_id, selected_uris, existing_uris, track_details=track_details
         )
-        cache.add_tracks(playlist_id, track_details)
+        # track_details may include local tracks that just got excluded from
+        # the actual add above (the API can't add those) - only the ones
+        # that really landed in the playlist belong in the in-memory cache.
+        added_track_details = [t for t in track_details if not t.get("is_local")]
+        cache.add_tracks(playlist_id, added_track_details)
         return {
             "type": step_type,
             "label": label,
             "added": added,
             "skipped": skipped,
+            "local_skipped": local_skipped,
             "playlist_name": playlist_name,
         }
 
@@ -194,17 +199,25 @@ def apply_step(sp: Spotify, cache: PlaylistCache, step: dict, result: Any, form)
         def _add_tracks(playlist_id, uris):
             existing_uris = {t["uri"] for t in cache.playlist(playlist_id)["tracks"]}
             track_details = _lookup_tracks(cache, step["source_ids"], uris)
-            added, skipped = playlist_filter_module.add_new_tracks_to_playlist(
+            added, skipped, local_skipped = playlist_filter_module.add_new_tracks_to_playlist(
                 sp, playlist_id, uris, existing_uris, track_details=track_details
             )
-            cache.add_tracks(playlist_id, track_details)
-            return added, skipped
+            # As above: track_details may include local tracks excluded from
+            # the actual add - only cache the ones that really landed.
+            added_track_details = [t for t in track_details if not t.get("is_local")]
+            cache.add_tracks(playlist_id, added_track_details)
+            return added, skipped, local_skipped
 
         added_counts = playlist_diff_module.add_to_playlists(sp, additions, add_tracks=_add_tracks)
 
         targets_by_id = {t["id"]: t["name"] for t in result["targets"]}
         added_summary = [
-            {"name": targets_by_id[pid], "added": count} for pid, count in added_counts.items()
+            {
+                "name": targets_by_id[pid],
+                "added": counts["added"],
+                "local_skipped": counts["local_skipped"],
+            }
+            for pid, counts in added_counts.items()
         ]
         return {"type": step_type, "label": label, "added_summary": added_summary}
 

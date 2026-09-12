@@ -20,11 +20,14 @@ def find_prependable_from_tracks(
 
     Returns {"to_add": [...source tracks not already in destination, still in
     source order...], "duplicates": [...source tracks skipped because
-    they're already in destination...]} - duplicates are detected by uri.
+    they're already in destination...], "local_skipped": [...source tracks
+    skipped because they're local files, which the Web API can't add to a
+    playlist at all...]} - duplicates/local_skipped are detected by uri.
     """
     existing_uris = {t["uri"] for t in destination_tracks}
     to_add: list[dict] = []
     duplicates: list[dict] = []
+    local_skipped: list[dict] = []
     seen: set[str] = set()
     for track in source_tracks:
         if track["uri"] in seen:
@@ -32,14 +35,18 @@ def find_prependable_from_tracks(
         seen.add(track["uri"])
         if track["uri"] in existing_uris:
             duplicates.append(track)
+        elif track.get("is_local"):
+            local_skipped.append(track)
         else:
             to_add.append(track)
     logger.info(
-        "found %d track(s) to prepend, %d already present (skipped)",
+        "found %d track(s) to prepend, %d already present (skipped), "
+        "%d local file(s) skipped (can't be added via the API)",
         len(to_add),
         len(duplicates),
+        len(local_skipped),
     )
-    return {"to_add": to_add, "duplicates": duplicates}
+    return {"to_add": to_add, "duplicates": duplicates, "local_skipped": local_skipped}
 
 
 def find_prependable(

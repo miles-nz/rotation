@@ -817,11 +817,17 @@ def playlist_filter_apply():
         playlist_id = result["destination_playlist_id"]
         playlist_name = result["destination_playlist_name"]
 
-    added, skipped = playlist_filter_module.add_tracks_to_playlist(sp, playlist_id, selected_uris)
+    added, skipped, local_skipped = playlist_filter_module.add_tracks_to_playlist(
+        sp, playlist_id, selected_uris
+    )
     _filter_job.result = None
 
     return render_template(
-        "playlist_filter_done.html", added=added, skipped=skipped, playlist_name=playlist_name
+        "playlist_filter_done.html",
+        added=added,
+        skipped=skipped,
+        local_skipped=local_skipped,
+        playlist_name=playlist_name,
     )
 
 
@@ -1030,8 +1036,8 @@ def playlist_diff_add():
     added_counts = playlist_diff_module.add_to_playlists(sp, additions)
     targets_by_id = {t["id"]: t["name"] for t in result["targets"]}
     added_summary = [
-        {"name": targets_by_id[pid], "added": count}
-        for pid, count in added_counts.items()
+        {"name": targets_by_id[pid], "added": counts["added"], "local_skipped": counts["local_skipped"]}
+        for pid, counts in added_counts.items()
     ]
     _diff_job.result = None
 
@@ -1165,11 +1171,17 @@ def playlist_search_apply():
         if not playlist_id:
             return redirect(url_for("playlist_search_scan_result"))
 
-    added, skipped = playlist_filter_module.add_tracks_to_playlist(sp, playlist_id, selected_uris)
+    added, skipped, local_skipped = playlist_filter_module.add_tracks_to_playlist(
+        sp, playlist_id, selected_uris
+    )
     _search_job.result = None
 
     return render_template(
-        "playlist_search_done.html", added=added, skipped=skipped, playlist_name=playlist_name
+        "playlist_search_done.html",
+        added=added,
+        skipped=skipped,
+        local_skipped=local_skipped,
+        playlist_name=playlist_name,
     )
 
 
@@ -1309,11 +1321,17 @@ def most_played_apply():
         if not playlist_id:
             return redirect(url_for("most_played_scan_result"))
 
-    added, skipped = playlist_filter_module.add_tracks_to_playlist(sp, playlist_id, selected_uris)
+    added, skipped, local_skipped = playlist_filter_module.add_tracks_to_playlist(
+        sp, playlist_id, selected_uris
+    )
     _most_played_job.result = None
 
     return render_template(
-        "most_played_done.html", added=added, skipped=skipped, playlist_name=playlist_name
+        "most_played_done.html",
+        added=added,
+        skipped=skipped,
+        local_skipped=local_skipped,
+        playlist_name=playlist_name,
     )
 
 
@@ -1389,6 +1407,7 @@ def playlist_prepend_scan_result():
         "playlist_prepend_result.html",
         to_add=result["to_add"],
         duplicates=result["duplicates"],
+        local_skipped=result["local_skipped"],
         source_name=result["source_name"],
         destination_name=result["destination_name"],
     )

@@ -14,14 +14,17 @@
         s.removed != 1 else '' }} {% elif s.type == 'playlist_filter' %} added
         {{ s.added }} track{{ 's' if s.added != 1 else '' }} to "{{
         s.playlist_name }}"{% if s.skipped %} ({{ s.skipped }} already
-        there){% endif %} {% elif s.type == 'playlist_cleanup' %} removed {{
-        s.removed }} track{{ 's' if s.removed != 1 else '' }} from "{{
-        s.playlist_name }}" {% elif s.type == 'playlist_diff' %} {% if
-        s.added_summary %} added tracks to: {% for a in s.added_summary %}{{
-        a.name }} ({{ a.added }}){% if not loop.last %}, {% endif %}{% endfor
-        %} {% else %} nothing added {% endif %} {% elif s.type == 'sync' %}
-        added {{ s.added }}, removed {{ s.removed }} in Liked Songs {% endif
-        %}
+        there){% endif %}{% if s.local_skipped %} ({{ s.local_skipped }} local
+        file{{ 's' if s.local_skipped != 1 else '' }} skipped - Spotify's API
+        doesn't support adding local files to a playlist){% endif %} {% elif
+        s.type == 'playlist_cleanup' %} removed {{ s.removed }} track{{ 's' if
+        s.removed != 1 else '' }} from "{{ s.playlist_name }}" {% elif s.type
+        == 'playlist_diff' %} {% if s.added_summary %} added tracks to: {% for
+        a in s.added_summary %}{{ a.name }} ({{ a.added }}{% if
+        a.local_skipped %}, {{ a.local_skipped }} local skipped{% endif %}){%
+        if not loop.last %}, {% endif %}{% endfor %} {% else %} nothing added
+        {% endif %} {% elif s.type == 'sync' %} added {{ s.added }}, removed {{
+        s.removed }} in Liked Songs {% endif %}
     </li>
     {% endfor %}
 </ol>

@@ -5,9 +5,11 @@
 
 {% if not to_add %}
 <p class="hint">
-    {% if duplicates %}
-    Every track in "{{ source_name }}" is already in "{{ destination_name }}"
-    ({{ duplicates|length }} skipped as duplicate{{ 's' if duplicates|length != 1 else '' }}) - nothing to add.
+    {% if duplicates or local_skipped %}
+    Every remaining track in "{{ source_name }}" is already in "{{ destination_name }}"
+    ({{ duplicates|length }} skipped as duplicate{{ 's' if duplicates|length != 1 else '' }}){% if local_skipped %},
+    and {{ local_skipped|length }} local file{{ 's' if local_skipped|length != 1 else '' }} couldn't be added
+    (Spotify's API doesn't support adding local files to a playlist){% endif %} - nothing to add.
     {% else %}
     "{{ source_name }}" has no tracks to add.
     {% endif %}
@@ -18,7 +20,9 @@
     {{ to_add|length }} track{{ 's' if to_add|length != 1 else '' }} from
     "{{ source_name }}" will be added to the top of "{{ destination_name }}",
     in this order{% if duplicates %} ({{ duplicates|length }} already in
-    "{{ destination_name }}", skipped as duplicate{{ 's' if duplicates|length != 1 else '' }}){% endif %}.
+    "{{ destination_name }}", skipped as duplicate{{ 's' if duplicates|length != 1 else '' }}){% endif %}{% if local_skipped %}
+    ({{ local_skipped|length }} local file{{ 's' if local_skipped|length != 1 else '' }} skipped - Spotify's
+    API doesn't support adding local files to a playlist){% endif %}.
     Uncheck any you don't want to add.
 </p>
 
