@@ -20,6 +20,7 @@ import playlists.playlist_cleanup as playlist_cleanup_module
 import playlists.playlist_diff as playlist_diff_module
 import playlists.playlist_prepend as playlist_prepend_module
 import playlists.playlist_search as playlist_search_module
+import playlists.playlist_swap as playlist_swap_module
 import lastfm.lastfm_client as lastfm_client_module
 import lastfm.most_played as most_played_module
 
@@ -125,6 +126,7 @@ _search_job = BackgroundJob(["playlists.playlist_search", "app"])
 _prepend_job = BackgroundJob(["playlists.playlist_prepend", "app"])
 _cascade_job = BackgroundJob(["playlists.playlist_cache", "app"])
 _most_played_job = BackgroundJob(["lastfm.most_played", "lastfm.scrobble_history", "app"])
+_swap_job = BackgroundJob(["playlists.playlist_swap", "app"])
 _cascade_run: cascade_module.CascadeRun | None = None
 
 # Gunicorn imports this file as the "app" module (not "__main__"), so it
@@ -283,6 +285,16 @@ def _run_playlist_prepend_scan(source_id: str, destination_id: str):
         sp = get_authenticated_client()
         return playlist_prepend_module.find_prependable(
             sp, source_id, destination_id, cancel_check=cancel_check
+        )
+
+    return target
+
+
+def _run_album_swap_scan(album_id: str, playlist_ids: list[str]):
+    def target(cancel_check):
+        sp = get_authenticated_client()
+        return playlist_swap_module.find_swaps(
+            sp, album_id, playlist_ids, cancel_check=cancel_check
         )
 
     return target
@@ -1194,6 +1206,166 @@ def playlist_search_apply():
         local_skipped=local_skipped,
         playlist_name=playlist_name,
     )
+
+
+# --- Album Swap -------------------------------------------------------------
+# Once a single already sitting on some playlists gets a full album release,
+# find every playlist track that's still the single version and swap it for
+# the matching album version, in the same position it occupied.
+
+
+@app.route("/album-swap")
+def album_swap_picker():
+    if not _credentials_configured():
+        return render_template("album_swap.html", needs_credentials=True)
+
+    sp = get_authenticated_client()
+    return render_template(
+        "album_swap.html",
+        needs_credentials=False,
+        needs_lastfm=not _lastfm_configured(),
+        logged_in=sp is not None,
+    )
+
+
+@app.route("/api/search-albums")
+def api_search_albums():
+    sp = get_authenticated_client()
+    if sp is None:
+        return jsonify({"error": "not_authenticated"}), 401
+
+    query = request.args.get("q", "").strip()
+    if not query:
+        return jsonify([])
+
+    results = sp.search(q=query, type="album", limit=10)
+    albums = []
+    for album in results["albums"]["items"]:
+        # Spotify's type=album search also returns singles/EPs - only full
+        # albums are relevant here, since the whole point is finding the
+        # album a single graduated into.
+        if album.get("album_type") != "album":
+            continue
+        images = album.get("images") or []
+        albums.append(
+            {
+                "id": album["id"],
+                "name": album["name"],
+                "artists": ", ".join(a["name"] for a in album.get("artists") or []),
+                "image_url": images[0]["url"] if images else None,
+            }
+        )
+
+    return jsonify(albums)
+
+
+@app.route("/api/recent-albums")
+def api_recent_albums():
+    if not _lastfm_configured():
+        return jsonify([])
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return jsonify({"error": "not_authenticated"}), 401
+
+    return jsonify(most_played_module.find_recent_released_albums(sp))
+
+
+@app.route("/api/album-tracks")
+def api_album_tracks():
+    sp = get_authenticated_client()
+    if sp is None:
+        return jsonify({"error": "not_authenticated"}), 401
+
+    album_id = request.args.get("album_id", "").strip()
+    if not album_id:
+        return jsonify({"error": "missing_album_id"}), 400
+
+    return jsonify(playlist_swap_module.get_album_tracks(sp, album_id))
+
+
+@app.route("/album-swap/scan")
+def album_swap_scan():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    album_id = request.args.get("album_id", "").strip()
+    playlist_ids = request.args.getlist("playlist_id")
+    if not album_id or not playlist_ids:
+        return redirect(url_for("album_swap_picker"))
+
+    _swap_job.start(_run_album_swap_scan(album_id, playlist_ids))
+
+    return render_template(
+        "progress.html",
+        status_url=url_for("album_swap_scan_status"),
+        cancel_url=url_for("album_swap_scan_cancel"),
+        result_url=url_for("album_swap_scan_result"),
+        back_url=url_for("album_swap_picker"),
+        heading="Scanning playlists…",
+        description="Reading your playlists to find single versions to swap for the album version. This can take a few minutes for large libraries.",
+    )
+
+
+@app.route("/album-swap/scan/status")
+def album_swap_scan_status():
+    return jsonify(_swap_job.status())
+
+
+@app.route("/album-swap/scan/cancel", methods=["POST"])
+def album_swap_scan_cancel():
+    _swap_job.cancel()
+    return jsonify({"ok": True})
+
+
+@app.route("/album-swap/scan/result")
+def album_swap_scan_result():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    result = _swap_job.result
+    if result is None:
+        return redirect(url_for("album_swap_picker"))
+
+    return render_template(
+        "album_swap_result.html",
+        album=result["album"],
+        swaps=result["swaps"],
+    )
+
+
+@app.route("/album-swap/apply", methods=["POST"])
+def album_swap_apply():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    result = _swap_job.result
+    if result is None:
+        return redirect(url_for("album_swap_picker"))
+
+    swaps_by_id = {s["id"]: s for s in result["swaps"]}
+    selected = [
+        swaps_by_id[sid] for sid in request.form.getlist("swap_id") if sid in swaps_by_id
+    ]
+    if not selected:
+        return redirect(url_for("album_swap_scan_result"))
+
+    summary = playlist_swap_module.apply_swaps(sp, selected)
+    _swap_job.result = None
+
+    return render_template("album_swap_done.html", summary=list(summary.values()))
 
 
 # --- Most Played -----------------------------------------------------------

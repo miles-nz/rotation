@@ -1,0 +1,18 @@
+{% extends "base.html" %} {% block title %}Done - Rotation{% endblock %} {%
+block content %}
+<h1>Done</h1>
+{% if not summary %}
+<p>No tracks were swapped.</p>
+{% else %}
+<p>Swapped:</p>
+<ul>
+    {% for entry in summary %}
+    <li>
+        {{ entry.swapped }} track{{ 's' if entry.swapped != 1 else '' }} in "{{
+        entry.playlist_name }}"
+    </li>
+    {% endfor %}
+</ul>
+{% endif %}
+<p><a class="button" href="{{ url_for('album_swap_picker') }}">Back</a></p>
+{% endblock %}

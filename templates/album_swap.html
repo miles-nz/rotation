@@ -1,0 +1,305 @@
+{% extends "base.html" %}
+{% block title %}Album Swap - Rotation{% endblock %}
+{% block extra_style %}
+.album-suggestions { display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 0.75rem 0 1.25rem; }
+.album-card { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; width: 7rem; text-align: center; cursor: pointer; border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem; background: var(--bg); }
+.album-card:hover, .album-card:focus-visible { border-color: var(--accent); background: var(--hover-bg); }
+.album-card img { width: 5rem; height: 5rem; border-radius: 4px; object-fit: cover; background: var(--thumb-bg); }
+.album-card-name { font-size: 0.8rem; font-weight: 600; line-height: 1.2; }
+.album-card-artist { font-size: 0.75rem; color: var(--muted); }
+.selected-album { display: flex; align-items: center; gap: 0.75rem; border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem; margin: 0.75rem 0; }
+.selected-album img { width: 3.5rem; height: 3.5rem; border-radius: 4px; object-fit: cover; background: var(--thumb-bg); }
+.album-tracklist { margin: 0.5rem 0 0 1.25rem; color: var(--muted); font-size: 0.9rem; }
+{% endblock %}
+{% block content %}
+<h1>Album Swap</h1>
+<p>
+    Search for an album, pick the playlists to check, and find any single
+    versions of its tracks so you can swap them for the album version - in
+    the same position they're already in.
+</p>
+
+{% if needs_credentials %}
+<p class="warning">
+    No Spotify credentials found. Copy <code>.env.example</code> to
+    <code>.env</code> and fill in <code>SPOTIFY_CLIENT_ID</code> and
+    <code>SPOTIFY_CLIENT_SECRET</code>, then restart the app. See the README for
+    how to register a Spotify app.
+</p>
+{% elif not logged_in %}
+<p><a class="button" href="{{ url_for('login') }}">Log in with Spotify</a></p>
+{% else %}
+
+<div id="album-picker">
+    <div id="suggestions-wrap" style="display: none">
+        <p class="hint">Recently played, released in the last 30 days:</p>
+        <div class="album-suggestions" id="album-suggestions"></div>
+    </div>
+
+    <div class="combo" id="album-combo">
+        <input
+            type="text"
+            id="album-search-input"
+            class="combo-input"
+            placeholder="Search for an album…"
+            autocomplete="off"
+        />
+        <div class="combo-panel" id="album-search-panel"></div>
+    </div>
+</div>
+
+<div id="selected-album-wrap" style="display: none">
+    <div class="selected-album" id="selected-album"></div>
+    <p class="hint" id="tracklist-hint"></p>
+    <ol class="album-tracklist" id="album-tracklist"></ol>
+    <p><button class="button secondary" id="change-album-btn" type="button">
+        Change album
+    </button></p>
+</div>
+
+<div id="playlist-picker-wrap" style="display: none">
+    <fieldset>
+        <legend>Check these playlists</legend>
+        <div id="playlist-combo-list"></div>
+        <p>
+            <button class="button secondary" id="add-playlist-btn" type="button">
+                + Add another playlist
+            </button>
+        </p>
+    </fieldset>
+
+    <p id="picker-loading" style="display: none"><span class="spinner"></span>Loading playlists…</p>
+    <p class="warning" id="picker-error" style="display: none"></p>
+    <p>
+        <button class="button" id="scan-btn" type="button">
+            Find Single Versions to Swap
+        </button>
+    </p>
+</div>
+
+<script src="{{ url_for('static', filename='playlist_picker.js') }}"></script>
+<script>
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, (c) => (
+            { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+        ));
+    }
+
+    let selectedAlbum = null;
+
+    function renderSelectedAlbum(album) {
+        const el = document.getElementById("selected-album");
+        el.innerHTML = "";
+        if (album.image_url) {
+            const img = document.createElement("img");
+            img.src = album.image_url;
+            img.alt = "";
+            el.appendChild(img);
+        }
+        const label = document.createElement("div");
+        label.innerHTML = `<strong>${escapeHtml(album.name)}</strong><br>${escapeHtml(album.artists)}`;
+        el.appendChild(label);
+    }
+
+    async function selectAlbum(album) {
+        selectedAlbum = album;
+        document.getElementById("album-picker").style.display = "none";
+        document.getElementById("selected-album-wrap").style.display = "block";
+        document.getElementById("playlist-picker-wrap").style.display = "block";
+        renderSelectedAlbum(album);
+
+        const tracklistEl = document.getElementById("album-tracklist");
+        const hintEl = document.getElementById("tracklist-hint");
+        tracklistEl.innerHTML = "";
+        hintEl.textContent = "Loading tracklist…";
+
+        try {
+            const resp = await fetch(
+                "{{ url_for('api_album_tracks') }}?album_id=" + encodeURIComponent(album.id),
+            );
+            if (resp.status === 401) {
+                window.location = "{{ url_for('login') }}";
+                return;
+            }
+            const data = await resp.json();
+            hintEl.textContent = "";
+            data.tracks.forEach((t) => {
+                const li = document.createElement("li");
+                li.textContent = t.artists + " – " + t.name;
+                tracklistEl.appendChild(li);
+            });
+        } catch (e) {
+            hintEl.textContent = "Couldn't load the tracklist.";
+        }
+
+        ensurePlaylistPicker();
+    }
+
+    document.getElementById("change-album-btn").addEventListener("click", () => {
+        selectedAlbum = null;
+        document.getElementById("album-picker").style.display = "block";
+        document.getElementById("selected-album-wrap").style.display = "none";
+        document.getElementById("playlist-picker-wrap").style.display = "none";
+    });
+
+    // --- Suggestions ---------------------------------------------------------
+    {% if not needs_lastfm %}
+    (async () => {
+        try {
+            const resp = await fetch("{{ url_for('api_recent_albums') }}");
+            if (resp.status === 401) return;
+            const albums = await resp.json();
+            if (!albums.length) return;
+            const wrap = document.getElementById("suggestions-wrap");
+            const container = document.getElementById("album-suggestions");
+            albums.forEach((a) => {
+                const card = document.createElement("div");
+                card.className = "album-card";
+                card.tabIndex = 0;
+                card.innerHTML = `
+                    ${a.image_url ? `<img src="${a.image_url}" alt="">` : ""}
+                    <span class="album-card-name">${escapeHtml(a.name)}</span>
+                    <span class="album-card-artist">${escapeHtml(a.artists)}</span>
+                `;
+                card.addEventListener("click", () => selectAlbum(a));
+                container.appendChild(card);
+            });
+            wrap.style.display = "block";
+        } catch (e) {
+            // Suggestions are a convenience, not required - fail silently.
+        }
+    })();
+    {% endif %}
+
+    // --- Album search-as-you-type ---------------------------------------------
+    const albumInput = document.getElementById("album-search-input");
+    const albumPanel = document.getElementById("album-search-panel");
+    let debounceTimer = null;
+    let currentController = null;
+
+    function renderAlbumResults(albums) {
+        albumPanel.innerHTML = "";
+        if (!albums.length) {
+            const empty = document.createElement("div");
+            empty.className = "combo-empty";
+            empty.textContent = "No albums match.";
+            albumPanel.appendChild(empty);
+            albumPanel.style.display = "block";
+            return;
+        }
+        albums.forEach((a) => {
+            const opt = document.createElement("div");
+            opt.className = "combo-option";
+            if (a.image_url) {
+                const img = document.createElement("img");
+                img.className = "combo-thumb";
+                img.src = a.image_url;
+                img.alt = "";
+                opt.appendChild(img);
+            } else {
+                const placeholder = document.createElement("div");
+                placeholder.className = "combo-thumb placeholder";
+                placeholder.textContent = "💿";
+                opt.appendChild(placeholder);
+            }
+            const label = document.createElement("span");
+            label.textContent = a.artists + " – " + a.name;
+            opt.appendChild(label);
+            opt.addEventListener("mousedown", (e) => {
+                e.preventDefault();
+                albumPanel.style.display = "none";
+                albumInput.value = "";
+                selectAlbum(a);
+            });
+            albumPanel.appendChild(opt);
+        });
+        albumPanel.style.display = "block";
+    }
+
+    async function runAlbumSearch(query) {
+        if (currentController) currentController.abort();
+        const controller = new AbortController();
+        currentController = controller;
+        try {
+            const resp = await fetch(
+                "{{ url_for('api_search_albums') }}?q=" + encodeURIComponent(query),
+                { signal: controller.signal },
+            );
+            if (resp.status === 401) {
+                window.location = "{{ url_for('login') }}";
+                return;
+            }
+            renderAlbumResults(await resp.json());
+        } catch (e) {
+            if (e.name !== "AbortError") {
+                albumPanel.innerHTML = "";
+                const err = document.createElement("div");
+                err.className = "combo-empty";
+                err.textContent = "Search failed. Try again.";
+                albumPanel.appendChild(err);
+                albumPanel.style.display = "block";
+            }
+        }
+    }
+
+    albumInput.addEventListener("input", () => {
+        clearTimeout(debounceTimer);
+        const query = albumInput.value.trim();
+        if (!query) {
+            if (currentController) currentController.abort();
+            albumPanel.style.display = "none";
+            return;
+        }
+        debounceTimer = setTimeout(() => runAlbumSearch(query), 400);
+    });
+    albumInput.addEventListener("blur", () => {
+        setTimeout(() => {
+            albumPanel.style.display = "none";
+        }, 150);
+    });
+
+    // --- Playlist picker -------------------------------------------------------
+    const playlistRowManager = createComboRowManager(
+        document.getElementById("playlist-combo-list"),
+        1,
+    );
+    document
+        .getElementById("add-playlist-btn")
+        .addEventListener("click", () => playlistRowManager.addRow(null));
+
+    let playlistsLoaded = false;
+    async function ensurePlaylistPicker() {
+        if (playlistsLoaded) return;
+        document.getElementById("picker-loading").style.display = "block";
+        try {
+            await fetchPlaylists(
+                "{{ url_for('api_playlists') }}",
+                "{{ url_for('login') }}",
+            );
+            playlistRowManager.reset([null]);
+            playlistsLoaded = true;
+        } catch (e) {
+            document.getElementById("picker-error").textContent =
+                "Failed to load your playlists. Check your connection and try again.";
+            document.getElementById("picker-error").style.display = "block";
+        }
+        document.getElementById("picker-loading").style.display = "none";
+    }
+
+    document.getElementById("scan-btn").addEventListener("click", () => {
+        const errorEl = document.getElementById("picker-error");
+        if (!selectedAlbum) return;
+        const playlists = playlistRowManager.getValues().filter((p) => p.id);
+        if (!playlists.length) {
+            errorEl.textContent = "Pick at least one playlist to check.";
+            errorEl.style.display = "block";
+            return;
+        }
+        errorEl.style.display = "none";
+        const params = new URLSearchParams();
+        params.append("album_id", selectedAlbum.id);
+        playlists.forEach((p) => params.append("playlist_id", p.id));
+        window.location = "{{ url_for('album_swap_scan') }}?" + params.toString();
+    });
+</script>
+{% endif %} {% endblock %}

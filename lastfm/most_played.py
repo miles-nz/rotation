@@ -317,6 +317,8 @@ def _search_album(sp: Spotify, item: dict) -> dict | None:
         "name": a["name"],
         "artists": ", ".join(ar["name"] for ar in artists),
         "artist_id": artists[0]["id"] if artists else None,
+        "album_type": a.get("album_type"),
+        "release_date": a.get("release_date"),
         "release_year": _parse_year(a.get("release_date")),
         "popularity": None,  # album search results don't include this - filled in by _enrich_album_popularity
         "image_url": images[0]["url"] if images else None,
@@ -606,6 +608,111 @@ def _find_most_played_albums(
             fetch_page=lastfm_client_module.get_top_albums,
             build_page_entries=build_page_entries,
         )
+    finally:
+        resolve_cache.save("album", cache)
+
+
+def _release_date_within(release_date: str | None, days: int) -> bool:
+    """True if release_date (Spotify's "YYYY-MM-DD" format) is within the
+    last `days` days of today. Spotify also returns year-only ("YYYY") or
+    year-month ("YYYY-MM") release dates for less precise releases - those
+    can't be pinned to a specific day, so they're treated as not qualifying
+    rather than guessed at."""
+    if not release_date:
+        return False
+    try:
+        released = datetime.strptime(release_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return False
+    age_days = (datetime.now(timezone.utc) - released).days
+    return 0 <= age_days <= days
+
+
+def find_recent_released_albums(
+    sp: Spotify,
+    days: int = 30,
+    max_suggestions: int = 5,
+    max_pages: int = 5,
+    cancel_check: CancelCheck | None = None,
+) -> list[dict]:
+    """Recently-scrobbled albums (most-recent-play first, NOT most-played)
+    that Spotify shows as released in the last `days` days - a shortcut for
+    "an album I've been listening to that just came out." Walks
+    get_recent_tracks newest-first, deduping by (artist, album) so each
+    distinct album is only resolved once, and stops once max_suggestions
+    qualifying albums are found or max_pages have been scanned, whichever
+    comes first - a bounded, cheap check suitable for a page load rather
+    than an open-ended history scan. Non-album releases (singles, EPs) are
+    excluded via album_type, since the point is finding the album a single
+    graduated into, not re-suggesting the single itself.
+
+    Reuses the same resolve_cache "album" cache as _find_most_played_albums,
+    so an album resolved by one feature is a cache hit for the other.
+    Returns up to max_suggestions album dicts (uri/name/artists/
+    release_date/image_url) in most-recently-played order.
+    """
+    cache = resolve_cache.load("album")
+    seen_keys: set[str] = set()
+    suggestions: list[dict] = []
+
+    try:
+        for page in range(1, max_pages + 1):
+            check_cancelled(cancel_check)
+            top, _meta = lastfm_client_module.call_with_retry(
+                lambda p=page: lastfm_client_module.get_recent_tracks(limit=50, page=p),
+                description=f"recent albums scan: page {page}",
+                cancel_check=cancel_check,
+            )
+            if not top:
+                break
+
+            for scrobble in top:
+                if len(suggestions) >= max_suggestions:
+                    break
+                album_name = scrobble.get("album") or ""
+                if not album_name:
+                    continue
+                key = resolve_cache.album_key(scrobble["artist"], album_name)
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+
+                cached = cache.get(key)
+                if cached is None:
+                    try:
+                        cached = _search_album(
+                            sp, {"artist": scrobble["artist"], "name": album_name}
+                        ) or {"found": False}
+                    except Exception:
+                        logger.warning(
+                            "recent albums scan: Spotify lookup failed for %r", key, exc_info=True
+                        )
+                        cached = {"found": False}
+                    cache[key] = cached
+
+                if (
+                    cached.get("found")
+                    and cached.get("album_type") == "album"
+                    and _release_date_within(cached.get("release_date"), days)
+                ):
+                    suggestions.append(
+                        {
+                            "id": cached["spotify_id"],
+                            "uri": cached["uri"],
+                            "name": cached["name"],
+                            "artists": cached["artists"],
+                            "release_date": cached["release_date"],
+                            "image_url": cached.get("image_url"),
+                        }
+                    )
+
+            if len(suggestions) >= max_suggestions:
+                break
+
+        logger.info(
+            "recent albums scan: %d suggestion(s) found", len(suggestions)
+        )
+        return suggestions[:max_suggestions]
     finally:
         resolve_cache.save("album", cache)
 

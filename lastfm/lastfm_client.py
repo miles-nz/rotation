@@ -184,11 +184,12 @@ def get_recent_tracks(
     username: str | None = None, limit: int = 200, page: int = 1, from_ts: int | None = None
 ) -> tuple[list[dict], dict]:
     """One page of scrobble history, newest first. Returns
-    ([{"artist", "name", "timestamp"}, ...], {"page", "total_pages"}).
-    Skips the in-progress "now playing" entry, if present - it has no
-    "date" yet since it hasn't finished being scrobbled. from_ts, if
-    given, only returns scrobbles after that unix timestamp (for
-    incremental syncs - avoids re-walking already-seen history).
+    ([{"artist", "name", "album", "timestamp"}, ...], {"page", "total_pages"}).
+    "album" is "" when Last.fm has no album tag for that scrobble. Skips the
+    in-progress "now playing" entry, if present - it has no "date" yet since
+    it hasn't finished being scrobbled. from_ts, if given, only returns
+    scrobbles after that unix timestamp (for incremental syncs - avoids
+    re-walking already-seen history).
     """
     params = {"user": username or _username(), "limit": limit, "page": page}
     if from_ts is not None:
@@ -200,6 +201,7 @@ def get_recent_tracks(
         {
             "artist": t["artist"]["#text"],
             "name": t["name"],
+            "album": (t.get("album") or {}).get("#text", ""),
             "timestamp": int(t["date"]["uts"]),
         }
         for t in _as_list(recenttracks.get("track"))
