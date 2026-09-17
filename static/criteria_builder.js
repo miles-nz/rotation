@@ -9,6 +9,7 @@ const FIELD_LABELS = {
     added_date: "Added date",
     release_year: "Release year",
     popularity: "Popularity (0-100)",
+    duration: "Duration (seconds)",
     explicit: "Explicit",
     artist: "Artist name",
     track_name: "Track name",
@@ -51,7 +52,10 @@ function fieldOperatorsFromSpec(spec) {
 }
 
 function describeCriterion(criterion) {
-    if (criterion.field === "added_date") {
+    if (
+        criterion.field === "added_date" &&
+        (criterion.operator === "within_last" || criterion.operator === "older_than")
+    ) {
         const opLabel =
             criterion.operator === "within_last"
                 ? "was added within the last"
@@ -125,7 +129,7 @@ function buildCriteriaBuilder(container, fieldOperators, fieldOrder, initial) {
         const operator = operatorSelect.value;
         valueInputs.innerHTML = "";
 
-        if (field === "added_date") {
+        if (field === "added_date" && (operator === "within_last" || operator === "older_than")) {
             const input1 = document.createElement("input");
             input1.type = "number";
             input1.min = "1";
@@ -147,6 +151,25 @@ function buildCriteriaBuilder(container, fieldOperators, fieldOrder, initial) {
                 select.appendChild(opt);
             });
             valueInputs.appendChild(select);
+            return;
+        }
+
+        if (field === "added_date") {
+            const input1 = document.createElement("input");
+            input1.type = "date";
+            input1.className = "value-input";
+            if (value) input1.value = value;
+            valueInputs.appendChild(input1);
+            if (operator === "between") {
+                const and = document.createElement("span");
+                and.textContent = " and ";
+                valueInputs.appendChild(and);
+                const input2 = document.createElement("input");
+                input2.type = "date";
+                input2.className = "value-input-2";
+                if (value2) input2.value = value2;
+                valueInputs.appendChild(input2);
+            }
             return;
         }
 
@@ -176,7 +199,13 @@ function buildCriteriaBuilder(container, fieldOperators, fieldOrder, initial) {
             return;
         }
 
-        const numericFields = ["release_year", "popularity", "playcount", "followers"];
+        const numericFields = [
+            "release_year",
+            "popularity",
+            "duration",
+            "playcount",
+            "followers",
+        ];
         const input1 = document.createElement("input");
         input1.type = numericFields.includes(field) ? "number" : "text";
         input1.className = "value-input";
@@ -185,9 +214,11 @@ function buildCriteriaBuilder(container, fieldOperators, fieldOrder, initial) {
                 ? "e.g. 2026"
                 : field === "popularity"
                   ? "0-100"
-                  : field === "playcount" || field === "followers"
-                    ? "e.g. 50"
-                    : "text to match";
+                  : field === "duration"
+                    ? "e.g. 180"
+                    : field === "playcount" || field === "followers"
+                      ? "e.g. 50"
+                      : "text to match";
         if (value) input1.value = value;
         valueInputs.appendChild(input1);
 

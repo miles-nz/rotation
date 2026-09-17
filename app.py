@@ -108,6 +108,14 @@ def _default_cascade_steps(sp):
 
 app = Flask(__name__)
 
+
+@app.template_filter("duration")
+def _format_duration(duration_ms) -> str:
+    if duration_ms is None:
+        return ""
+    total_seconds = int(duration_ms) // 1000
+    return f"{total_seconds // 60}:{total_seconds % 60:02d}"
+
 _sync_job = BackgroundJob(["core.sync", "app"])
 _dup_job = BackgroundJob(["playlists.duplicates", "app"])
 _filter_job = BackgroundJob(["playlists.playlist_filter", "app"])
@@ -215,6 +223,9 @@ def _run_playlist_cleanup_scan(
     def target(cancel_check):
         sp = get_authenticated_client()
         playlist = playlist_cache_module.get_playlist(sp, playlist_id, cancel_check)
+        playlist_filter_module.attach_genres(
+            sp, playlist["tracks"], [{"field": field}], cancel_check
+        )
         removals = playlist_cleanup_module.find_removals_from_tracks(
             playlist["name"], playlist["tracks"], field, operator, value, value2
         )

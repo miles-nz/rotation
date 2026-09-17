@@ -18,6 +18,12 @@ logger = logging.getLogger(__name__)
 # hasn't moved since the last run can skip the full paged re-fetch.
 CACHE_DIR = DATA_DIR / ".playlist_cache"
 
+# Bump this whenever the track-dict shape gains/loses a field, so a cache
+# written under an older shape is treated as stale (forcing a full re-fetch)
+# instead of silently missing fields newer code expects - snapshot_id alone
+# doesn't change just because this app's own field set changed.
+_SCHEMA_VERSION = 2
+
 
 def _cache_path(playlist_id: str) -> Path:
     return CACHE_DIR / f"{playlist_id}.json"
@@ -33,19 +39,29 @@ def _load_cached_tracks(playlist_id: str, snapshot_id: str) -> list[dict] | None
         return None
     if data.get("snapshot_id") != snapshot_id:
         return None
+    if data.get("schema_version") != _SCHEMA_VERSION:
+        return None
     return data.get("tracks")
 
 
 def _save_cached_tracks(playlist_id: str, snapshot_id: str, tracks: list[dict]) -> None:
     CACHE_DIR.mkdir(exist_ok=True)
-    _cache_path(playlist_id).write_text(json.dumps({"snapshot_id": snapshot_id, "tracks": tracks}))
+    _cache_path(playlist_id).write_text(
+        json.dumps(
+            {
+                "snapshot_id": snapshot_id,
+                "schema_version": _SCHEMA_VERSION,
+                "tracks": tracks,
+            }
+        )
+    )
 
 
 # Superset of every field any cascade step needs, so a playlist is only ever
 # paged through once no matter how many steps use it.
 _FIELDS = (
     "items(added_at,track(uri,name,artists,explicit,popularity,is_local,"
-    "album(name,release_date))),next"
+    "duration_ms,album(name,release_date))),next"
 )
 
 
@@ -76,15 +92,18 @@ def _fetch_playlist_tracks(
             processed += 1
             track = item.get("track")
             if track and track.get("uri"):
+                artists = track.get("artists") or []
                 tracks.append(
                     {
                         "uri": track["uri"],
                         "name": track["name"],
-                        "artists": ", ".join(a["name"] for a in track["artists"]),
+                        "artists": ", ".join(a["name"] for a in artists),
+                        "artist_id": artists[0]["id"] if artists else None,
                         "album": (track.get("album") or {}).get("name") or "",
                         "is_local": bool(track.get("is_local")),
                         "explicit": bool(track.get("explicit")),
                         "popularity": track.get("popularity"),
+                        "duration_ms": track.get("duration_ms"),
                         "release_year": _parse_year(
                             (track.get("album") or {}).get("release_date")
                         ),
@@ -205,14 +224,17 @@ def track_details_for_uris(sp: Spotify, uris) -> dict[str, dict]:
         for track in sp.tracks(ids[i : i + 50])["tracks"]:
             if not track:
                 continue
+            artists = track.get("artists") or []
             details[track["uri"]] = {
                 "uri": track["uri"],
                 "name": track["name"],
-                "artists": ", ".join(a["name"] for a in track["artists"]),
+                "artists": ", ".join(a["name"] for a in artists),
+                "artist_id": artists[0]["id"] if artists else None,
                 "album": (track.get("album") or {}).get("name") or "",
                 "is_local": False,
                 "explicit": bool(track.get("explicit")),
                 "popularity": track.get("popularity"),
+                "duration_ms": track.get("duration_ms"),
                 "release_year": _parse_year((track.get("album") or {}).get("release_date")),
                 "added_at": now,
             }
@@ -303,9 +325,10 @@ class PlaylistCache:
     a cascade's steps can share one fetch per playlist instead of each step
     re-paging through the same tracks.
 
-    Track dicts: {"uri", "name", "artists", "album", "is_local", "explicit",
-    "popularity", "release_year", "added_at"} - a superset covering every
-    field any of the five functions look at.
+    Track dicts: {"uri", "name", "artists", "artist_id", "album", "is_local",
+    "explicit", "popularity", "duration_ms", "release_year", "added_at"} -
+    a superset covering every field any of the five functions look at.
+    "genres" is added on top by ensure_genres(), once resolved.
     """
 
     def __init__(self) -> None:
@@ -324,6 +347,17 @@ class PlaylistCache:
     def ensure_liked_songs(self, sp: Spotify, cancel_check: CancelCheck | None = None) -> None:
         if self._liked_songs is None:
             self._liked_songs = get_liked_songs(sp, cancel_check)
+
+    def ensure_genres(self, sp: Spotify, cancel_check: CancelCheck | None = None) -> None:
+        """Resolves and attaches "genres" to every cached track across every
+        playlist currently held, in one batch. Deferred import avoids a
+        module-level cycle (playlist_filter already imports this module)."""
+        import playlists.playlist_filter as playlist_filter_module
+
+        all_tracks = [t for entry in self._playlists.values() for t in entry["tracks"]]
+        playlist_filter_module.attach_genres(
+            sp, all_tracks, [{"field": "genre"}], cancel_check
+        )
 
     def playlist(self, playlist_id: str) -> dict:
         entry = self._playlists[playlist_id]

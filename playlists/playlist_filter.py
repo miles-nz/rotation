@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from spotipy import Spotify
 
-from core.cancellation import CancelCheck
+from core.cancellation import CancelCheck, check_cancelled
+from lastfm import resolve_cache
 import playlists.playlist_cache as playlist_cache_module
 
 ADD_BATCH_SIZE = 100
@@ -20,12 +21,14 @@ _DASH_SUFFIX_RE = re.compile(r"\s+-\s+[^-]+$")
 logger = logging.getLogger(__name__)
 
 FIELD_OPERATORS = {
-    "added_date": ["within_last", "older_than"],
+    "added_date": ["within_last", "older_than", "is", "before", "after", "between"],
     "release_year": ["is", "before", "after", "between"],
     "popularity": ["at_least", "at_most"],
+    "duration": ["at_least", "at_most"],
     "explicit": ["is"],
     "artist": ["contains"],
     "track_name": ["contains"],
+    "genre": ["contains"],
 }
 
 _UNIT_DAYS = {"days": 1, "weeks": 7, "months": 30}
@@ -35,7 +38,8 @@ _UNIT_DAYS = {"days": 1, "weeks": 7, "months": 30}
 # match" keeps a local track from being auto-flagged for removal by a
 # cleanup rule it has no real basis to fail, while still letting it be
 # selected by any other criterion in the same rule (e.g. artist/track_name).
-_SPOTIFY_ONLY_FIELDS = {"popularity", "release_year", "explicit"}
+# Local files have no resolvable artist id either, so genre joins this set.
+_SPOTIFY_ONLY_FIELDS = {"popularity", "release_year", "explicit", "genre"}
 
 
 def _cutoff_datetime(value: str, unit: str) -> datetime:
@@ -70,11 +74,23 @@ def matches_criterion(
         added_dt = _parse_added_at(track.get("added_at"))
         if added_dt is None:
             return False
-        cutoff = _cutoff_datetime(value, value2)
-        if operator == "within_last":
-            return added_dt >= cutoff
-        if operator == "older_than":
+        if operator in ("within_last", "older_than"):
+            cutoff = _cutoff_datetime(value, value2)
+            if operator == "within_last":
+                return added_dt >= cutoff
             return added_dt < cutoff
+        added_date = added_dt.date()
+        target = date.fromisoformat(value)
+        if operator == "is":
+            return added_date == target
+        if operator == "before":
+            return added_date < target
+        if operator == "after":
+            return added_date > target
+        if operator == "between":
+            target2 = date.fromisoformat(value2)
+            lo, hi = sorted((target, target2))
+            return lo <= added_date <= hi
         return False
     elif field == "release_year":
         year = track["release_year"]
@@ -100,12 +116,24 @@ def matches_criterion(
             return popularity >= target
         if operator == "at_most":
             return popularity <= target
+    elif field == "duration":
+        duration_ms = track.get("duration_ms")
+        if duration_ms is None:
+            return False
+        target = int(value)
+        duration_seconds = duration_ms / 1000
+        if operator == "at_least":
+            return duration_seconds >= target
+        if operator == "at_most":
+            return duration_seconds <= target
     elif field == "explicit":
         return track["explicit"] == (value == "yes")
     elif field == "artist":
         return value.lower() in track["artists"].lower()
     elif field == "track_name":
         return value.lower() in track["name"].lower()
+    elif field == "genre":
+        return any(value.lower() in g.lower() for g in track.get("genres") or [])
     return False
 
 
@@ -127,7 +155,9 @@ def find_matches_from_tracks(
     Returns matching tracks, deduped by uri across source playlists and
     ordered by source playlist: all matches from the first playlist (in
     that playlist's order), then any new matches from the second playlist,
-    and so on: [{"uri", "name", "artists"}]
+    and so on: [{"uri", "name", "artists", "duration_ms", "genres"}] -
+    "genres" is only present when a genre criterion was actually resolved
+    (see attach_genres), otherwise None.
     """
     seen: dict[str, dict] = {}
 
@@ -140,6 +170,8 @@ def find_matches_from_tracks(
                     "uri": track["uri"],
                     "name": track["name"],
                     "artists": track["artists"],
+                    "duration_ms": track.get("duration_ms"),
+                    "genres": track.get("genres"),
                 }
 
     matches = list(seen.values())
@@ -149,6 +181,47 @@ def find_matches_from_tracks(
         len(source_playlists),
     )
     return matches
+
+
+def _needs_genres(criteria: list[dict]) -> bool:
+    return any(c["field"] == "genre" for c in criteria)
+
+
+def _fetch_genres(
+    sp: Spotify, artist_ids: list[str], cancel_check: CancelCheck | None
+) -> dict[str, list[str]]:
+    """Batch genre lookup, keyed by Spotify artist id - shares the same
+    on-disk cache lastfm/most_played.py's own genre lookup already
+    populates, since it's the same data (artist id -> genre tags)."""
+    cache = resolve_cache.load("artist_genres")
+    ids = [aid for aid in dict.fromkeys(artist_ids) if aid]
+    missing = [aid for aid in ids if aid not in cache]
+    if missing:
+        for chunk in _chunks(missing, 50):
+            for a in sp.artists(chunk)["artists"]:
+                if a:
+                    cache[a["id"]] = {"genres": a.get("genres") or []}
+            check_cancelled(cancel_check)
+        resolve_cache.save("artist_genres", cache)
+    return {aid: cache.get(aid, {}).get("genres", []) for aid in ids}
+
+
+def attach_genres(
+    sp: Spotify,
+    tracks: list[dict],
+    criteria: list[dict],
+    cancel_check: CancelCheck | None = None,
+) -> None:
+    """Sets track["genres"] for every track in tracks, if - and only if -
+    criteria actually filters on genre (an unnecessary sp.artists() batch
+    is pure waste otherwise). No-op for tracks without an artist_id (local
+    files)."""
+    if not _needs_genres(criteria):
+        return
+    artist_ids = [t["artist_id"] for t in tracks if t.get("artist_id")]
+    genres_by_id = _fetch_genres(sp, artist_ids, cancel_check)
+    for track in tracks:
+        track["genres"] = genres_by_id.get(track.get("artist_id"), [])
 
 
 def find_matches(
@@ -162,6 +235,8 @@ def find_matches(
         {"id": pid, "name": playlists[pid]["name"], "tracks": playlists[pid]["tracks"]}
         for pid in source_playlist_ids
     ]
+    for playlist in fetched:
+        attach_genres(sp, playlist["tracks"], criteria, cancel_check)
     return find_matches_from_tracks(fetched, criteria)
 
 

@@ -64,7 +64,11 @@ content %}
                 checked
             />
             <span>{{ track.artists }} – {{ track.name }}</span>
-            {% if track.uri in similar_versions %}
+            {% if track.duration_ms is not none %}
+            <span class="track-meta">{{ track.duration_ms | duration }}</span>
+            {% endif %} {% if track.genres %}
+            <span class="track-meta">{{ track.genres | join(', ') }}</span>
+            {% endif %} {% if track.uri in similar_versions %}
             <span class="version-warning">
                 ⚠ possibly already in "{{ destination_label }}" as a different
                 version: {% for candidate in similar_versions[track.uri] %} "{{

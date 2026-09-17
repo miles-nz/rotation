@@ -27,7 +27,10 @@ def find_removals_from_tracks(
     """tracks: already-fetched tracks for the playlist.
 
     Returns tracks in the playlist that do NOT match the keep-criterion,
-    sorted by artist/name: [{"uri", "name", "artists", "added_at"}, ...]
+    sorted by artist/name: [{"uri", "name", "artists", "added_at",
+    "duration_ms", "genres"}, ...] - "genres" is only present when a genre
+    criterion was actually resolved (see playlist_filter.attach_genres),
+    otherwise None.
     """
     removals = [
         {
@@ -35,6 +38,8 @@ def find_removals_from_tracks(
             "name": t["name"],
             "artists": t["artists"],
             "added_at": t["added_at"],
+            "duration_ms": t.get("duration_ms"),
+            "genres": t.get("genres"),
         }
         for t in tracks
         if not matches_criterion(t, field, operator, value, value2)

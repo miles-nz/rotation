@@ -107,7 +107,7 @@ legend { font-weight: bold; padding: 0 0.4rem; }
    Playlist Cleanup result screens. */
 .match { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
 .match:last-child { border-bottom: none; }
-.added-date { color: var(--muted); font-size: 0.85rem; }
+.track-meta { color: var(--muted); font-size: 0.85rem; }
 
 /* Cascade: step banner shown on each function's result screen when it's
    running as part of a chain, and the step-builder page itself. */

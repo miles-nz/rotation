@@ -47,6 +47,14 @@ def needs_liked_songs(step: dict) -> bool:
     return step["type"] == "sync"
 
 
+def _needs_genres(step: dict) -> bool:
+    if step["type"] == "playlist_filter":
+        return any(c["field"] == "genre" for c in step["criteria"])
+    if step["type"] == "playlist_cleanup":
+        return step["field"] == "genre"
+    return False
+
+
 def _lookup_tracks(cache: PlaylistCache, source_playlist_ids, uris) -> list[dict]:
     """Finds the already-fetched track dict for each uri by searching the
     given source playlists - used when tracks move from a source into a
@@ -266,11 +274,16 @@ class CascadeRun:
 
         if len(tasks) == 1:
             tasks[0]()
-            return
-        with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
-            futures = [pool.submit(task) for task in tasks]
-            for future in futures:
-                future.result()
+        else:
+            with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
+                futures = [pool.submit(task) for task in tasks]
+                for future in futures:
+                    future.result()
+
+        # Needs every playlist's tracks already fetched (to collect artist
+        # ids from), so this runs after the tasks above, not alongside them.
+        if any(_needs_genres(step) for step in self.steps):
+            self.cache.ensure_genres(sp, cancel_check)
 
     def scan_current(self) -> Any:
         result = scan_step(self.cache, self.current_step)

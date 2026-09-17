@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Search Results - Rotation{% endblock %}
 {% block extra_style %}
+body { max-width: 75rem; }
 .dest-option { display: block; margin: 0.5rem 0; }
 .dest-detail { margin: 0.5rem 0 0.5rem 1.5rem; }
 .results-table-wrap { overflow-x: auto; margin: 1rem 0; }
@@ -42,6 +43,8 @@ table.results-table { width: 100%; border-collapse: collapse; font-size: 0.9rem;
                     <th class="sortable" data-sort="album">Album <span class="sort-arrow"></span></th>
                     <th class="sortable" data-sort="release_year">Year <span class="sort-arrow"></span></th>
                     <th class="sortable" data-sort="popularity">Popularity <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-sort="duration_ms">Duration <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-sort="genres">Genre <span class="sort-arrow"></span></th>
                     <th class="sortable" data-sort="added_at">Added <span class="sort-arrow"></span></th>
                 </tr>
             </thead>
@@ -105,9 +108,16 @@ table.results-table { width: 100%; border-collapse: collapse; font-size: 0.9rem;
         ));
     }
 
+    function formatDuration(durationMs) {
+        const totalSeconds = Math.floor(durationMs / 1000);
+        const seconds = totalSeconds % 60;
+        return `${Math.floor(totalSeconds / 60)}:${String(seconds).padStart(2, "0")}`;
+    }
+
     function sortValue(track, key) {
+        if (key === "genres") return (track.genres || []).join(", ").toLowerCase();
         const v = track[key];
-        if (key === "release_year" || key === "popularity") return v;
+        if (key === "release_year" || key === "popularity" || key === "duration_ms") return v;
         return v ? String(v).toLowerCase() : "";
     }
 
@@ -149,6 +159,8 @@ table.results-table { width: 100%; border-collapse: collapse; font-size: 0.9rem;
                     <td>${escapeHtml(t.album || "")}</td>
                     <td>${t.release_year || ""}</td>
                     <td>${t.popularity != null ? t.popularity : ""}</td>
+                    <td>${t.duration_ms != null ? formatDuration(t.duration_ms) : ""}</td>
+                    <td>${t.genres && t.genres.length ? escapeHtml(t.genres.join(", ")) : ""}</td>
                     <td>${t.added_at ? escapeHtml(t.added_at.slice(0, 10)) : ""}</td>
                 </tr>`,
             )

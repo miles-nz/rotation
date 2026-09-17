@@ -6,7 +6,7 @@ from spotipy import Spotify
 
 from core.cancellation import CancelCheck
 import playlists.playlist_cache as playlist_cache_module
-from playlists.playlist_filter import FIELD_OPERATORS, matches_all_criteria
+from playlists.playlist_filter import FIELD_OPERATORS, attach_genres, matches_all_criteria
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,8 @@ def search(
     """
     all_ids = list(dict.fromkeys(list(include_playlist_ids) + list(exclude_playlist_ids or [])))
     playlists = playlist_cache_module.get_playlists(sp, all_ids, cancel_check)
+    for playlist_id in include_playlist_ids:
+        attach_genres(sp, playlists[playlist_id]["tracks"], criteria, cancel_check)
 
     exclude_uris: set[str] = set()
     exclude_signatures: set[tuple[str, str]] = set()

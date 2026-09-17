@@ -43,7 +43,12 @@ endblock %} {% block content %}
                 checked
             />
             <span>{{ track.artists }} – {{ track.name }}</span>
-            <span class="added-date"
+            {% if track.duration_ms is not none %}
+            <span class="track-meta">{{ track.duration_ms | duration }}</span>
+            {% endif %} {% if track.genres %}
+            <span class="track-meta">{{ track.genres | join(', ') }}</span>
+            {% endif %}
+            <span class="track-meta"
                 >added {{ track.added_at[:10] if track.added_at else 'unknown
                 date' }}</span
             >
