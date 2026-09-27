@@ -30,6 +30,11 @@ functions. Currently available:
   review it posts a summary and a link back to the app to a Discord or
   Slack webhook (`CASCADE_WEBHOOK_URL`) and shows a "pending review" banner
   on the homepage until you review it.
+- **Removal History** - every track Duplicate Finder or Playlist Cleanup
+  removes (standalone or in a Cascade) is logged, keeping the last 20
+  removals, so you can put tracks back later - all of them or just the
+  ones you pick. Restored tracks go back in their original positions if
+  the playlist hasn't changed since, otherwise at the end.
 
 ## Setup
 

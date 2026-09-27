@@ -1,0 +1,29 @@
+{% extends "base.html" %} {% block title %}Restored - Rotation{% endblock %} {%
+block content %} {% if summary is none %}
+<h1>Nothing to restore</h1>
+<p>That removal is no longer in the history.</p>
+{% else %}
+<h1>Restored</h1>
+{% if not summary.playlists %}
+<p>Nothing was left to restore.</p>
+{% else %}
+<ul>
+    {% for p in summary.playlists %}
+    <li>
+        {{ p.restored }} track{{ 's' if p.restored != 1 else '' }} put back in
+        "{{ p.playlist_name }}"{% if p.restored and not p.in_place %}, at the
+        end - the playlist has changed since the removal, so the original
+        positions no longer line up{% endif %}{% if p.already_back %} ({{
+        p.already_back }} already back in the playlist, skipped){% endif %}
+    </li>
+    {% endfor %}
+</ul>
+<p class="hint">Restored tracks show today as their "date added".</p>
+{% endif %} {% endif %}
+<p>
+    <a class="button" href="{{ url_for('removal_history') }}"
+        >Removal History</a
+    >
+    <a class="button secondary" href="{{ url_for('home') }}">Home</a>
+</p>
+{% endblock %}

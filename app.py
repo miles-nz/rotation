@@ -21,6 +21,7 @@ import playlists.playlist_diff as playlist_diff_module
 import playlists.playlist_prepend as playlist_prepend_module
 import playlists.playlist_search as playlist_search_module
 import playlists.playlist_swap as playlist_swap_module
+import playlists.removal_history as removal_history_module
 import lastfm.lastfm_client as lastfm_client_module
 import lastfm.most_played as most_played_module
 
@@ -694,10 +695,12 @@ def duplicates_remove():
         if playlist_id and uri:
             removals.append({"playlist_id": playlist_id, "uri": uri})
 
-    duplicates_module.remove_from_playlists(sp, removals)
+    history_id = duplicates_module.remove_from_playlists(sp, removals)
     _dup_job.result = None
 
-    return render_template("duplicates_removed.html", removed_count=len(removals))
+    return render_template(
+        "duplicates_removed.html", removed_count=len(removals), history_id=history_id
+    )
 
 
 # --- Playlist Filter -----------------------------------------------------
@@ -950,13 +953,57 @@ def playlist_cleanup_remove():
     removal_uris = {r["uri"] for r in result["removals"]}
     selected_uris = [uri for uri in request.form.getlist("track") if uri in removal_uris]
 
-    playlist_cleanup_module.remove_tracks(sp, result["playlist_id"], selected_uris)
+    history_id = playlist_cleanup_module.remove_tracks(sp, result["playlist_id"], selected_uris)
     playlist_name = result["playlist_name"]
     _cleanup_job.result = None
 
     return render_template(
-        "playlist_cleanup_done.html", removed=len(selected_uris), playlist_name=playlist_name
+        "playlist_cleanup_done.html",
+        removed=len(selected_uris),
+        playlist_name=playlist_name,
+        history_id=history_id,
     )
+
+
+# --- Removal History -------------------------------------------------------
+# Every removal Duplicate Finder / Playlist Cleanup (standalone or in a
+# Cascade) makes is logged, so tracks can be put back later - usually a
+# missing song is only noticed days afterwards in Spotify itself.
+
+
+@app.route("/removal-history")
+def removal_history():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    return render_template(
+        "removal_history.html",
+        entries=removal_history_module.load_history(),
+        max_entries=removal_history_module.MAX_ENTRIES,
+    )
+
+
+@app.route("/removal-history/<entry_id>/restore", methods=["POST"])
+def removal_history_restore(entry_id: str):
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    # "all" is the done screen's Undo shortcut; otherwise only the ticked
+    # tracks from the history page.
+    keys = None if request.form.get("all") else set(request.form.getlist("track"))
+    if keys is not None and not keys:
+        return redirect(url_for("removal_history"))
+
+    summary = removal_history_module.restore(sp, entry_id, keys)
+    return render_template("removal_history_restored.html", summary=summary)
 
 
 # --- Playlist Diff -------------------------------------------------------

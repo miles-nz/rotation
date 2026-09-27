@@ -6,6 +6,7 @@ from spotipy import Spotify
 
 from core.cancellation import CancelCheck
 import playlists.playlist_cache as playlist_cache_module
+import playlists.removal_history as removal_history_module
 
 REMOVE_BATCH_SIZE = 100
 
@@ -71,14 +72,30 @@ def _chunks(items: list, size: int):
         yield items[i : i + size]
 
 
-def remove_from_playlists(sp: Spotify, removals: list[dict]) -> None:
-    """removals: [{"playlist_id": ..., "uri": ...}, ...]"""
+def remove_from_playlists(
+    sp: Spotify, removals: list[dict], source: str = "Duplicate Finder"
+) -> str | None:
+    """removals: [{"playlist_id": ..., "uri": ...}, ...]
+
+    Logs the removal to removal_history under source first; returns that
+    history entry's id (None if there was nothing to remove)."""
     by_playlist: dict[str, list[str]] = {}
     for removal in removals:
         by_playlist.setdefault(removal["playlist_id"], []).append(removal["uri"])
 
+    playlists = {pid: playlist_cache_module.get_playlist(sp, pid) for pid in by_playlist}
+    history_id = removal_history_module.record(
+        source,
+        [
+            removal_history_module.snapshot_removed(
+                pid, playlists[pid]["name"], playlists[pid]["tracks"], uris
+            )
+            for pid, uris in by_playlist.items()
+        ],
+    )
+
     for playlist_id, uris in by_playlist.items():
-        current_tracks = playlist_cache_module.get_playlist(sp, playlist_id)["tracks"]
+        current_tracks = playlists[playlist_id]["tracks"]
 
         batches = list(_chunks(uris, REMOVE_BATCH_SIZE))
         for i, batch in enumerate(batches, start=1):
@@ -107,3 +124,5 @@ def remove_from_playlists(sp: Spotify, removals: list[dict]) -> None:
                 playlist_id,
                 exc_info=True,
             )
+
+    return history_id

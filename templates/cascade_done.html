@@ -28,7 +28,13 @@
     </li>
     {% endfor %}
 </ol>
-{% endif %}
+{% if summaries | selectattr('type', 'in', ['duplicates', 'playlist_cleanup']) |
+selectattr('removed') | list %}
+<p class="hint">
+    Removed tracks can be restored from
+    <a href="{{ url_for('removal_history') }}">Removal History</a>.
+</p>
+{% endif %} {% endif %}
 
 <p>
     <a class="button" href="{{ url_for('home') }}">Home</a>

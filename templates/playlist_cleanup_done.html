@@ -5,5 +5,19 @@ endblock %} {% block content %}
     Removed {{ removed }} track{{ 's' if removed != 1 else '' }} from "{{
     playlist_name }}".
 </p>
+{% if history_id %}
+<form method="post" action="{{ url_for('removal_history_restore', entry_id=history_id) }}">
+    <input type="hidden" name="all" value="1" />
+    <p>
+        <a class="button" href="{{ url_for('playlist_cleanup_picker') }}">Back</a>
+        <button class="button secondary" type="submit">Undo</button>
+    </p>
+</form>
+<p class="hint">
+    Changed your mind later? Removals can also be restored from
+    <a href="{{ url_for('removal_history') }}">Removal History</a>.
+</p>
+{% else %}
 <p><a class="button" href="{{ url_for('playlist_cleanup_picker') }}">Back</a></p>
+{% endif %}
 {% endblock %}

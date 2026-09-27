@@ -1,0 +1,90 @@
+{% extends "base.html" %} {% block title %}Removal History - Rotation{%
+endblock %} {% block extra_style %}
+  .history-entry { border: 1px solid var(--border); border-radius: 8px; margin: 0.75rem 0; }
+  .history-entry > summary { cursor: pointer; padding: 0.75rem 1rem; list-style-position: inside; }
+  .history-entry > summary .track-meta { display: block; margin-top: 0.2rem; }
+  .history-entry-body { padding: 0 1rem 1rem; }
+  .history-entry h3 { font-size: 1rem; margin: 1rem 0 0.25rem; }
+  .history-status { color: var(--muted); font-size: 0.85rem; margin-left: auto; }
+{% endblock %} {% block content %}
+<h1>Removal History</h1>
+<p class="hint">
+    Tracks removed by Duplicate Finder and Playlist Cleanup (including in a
+    Cascade). The last {{ max_entries }} removals are kept.
+</p>
+
+{% if not entries %}
+<p>Nothing's been removed yet.</p>
+{% endif %} {% for entry in entries %} {% set tracks = entry.playlists |
+map(attribute='removed') | sum(start=[]) %} {% set still_removed = tracks |
+selectattr('status', 'equalto', 'removed') | rejectattr('is_local') | list %}
+<details class="history-entry">
+    <summary>
+        <strong
+            ><time class="local-time" datetime="{{ entry.created_at }}"
+                >{{ entry.created_at[:16] | replace('T', ' ') }} UTC</time
+            ></strong
+        >
+        - {{ entry.source }}
+        <span class="track-meta">
+            {{ tracks | length }} track{{ 's' if tracks | length != 1 else '' }}
+            from {% for p in entry.playlists %}"{{ p.playlist_name }}"{% if not
+            loop.last %}, {% endif %}{% endfor %}{% if not still_removed %} -
+            nothing left to restore{% elif still_removed | length < tracks |
+            length %} - {{ still_removed | length }} still removed{% endif %}
+        </span>
+    </summary>
+    <div class="history-entry-body">
+        <form
+            method="post"
+            action="{{ url_for('removal_history_restore', entry_id=entry.id) }}"
+        >
+            {% for p in entry.playlists %} {% if entry.playlists | length > 1
+            %}
+            <h3>{{ p.playlist_name }}</h3>
+            {% endif %} {% for t in p.removed | sort(attribute='position') %}
+            <label class="match">
+                {% if t.status == 'removed' and not t.is_local %}
+                <input
+                    type="checkbox"
+                    name="track"
+                    value="{{ p.playlist_id }}::{{ t.position }}"
+                />
+                {% else %}
+                <input type="checkbox" disabled />
+                {% endif %}
+                <span>{{ t.artists }} – {{ t.name }}</span>
+                {% if t.status == 'restored' %}
+                <span class="history-status">restored</span>
+                {% elif t.status == 'already_back' %}
+                <span class="history-status">already back</span>
+                {% elif t.is_local %}
+                <span class="history-status">local file - can't restore</span>
+                {% endif %}
+            </label>
+            {% endfor %} {% endfor %} {% if still_removed %}
+            <p style="margin-top: 1rem">
+                <button class="button" type="submit">Restore selected</button>
+                <button class="button secondary" type="submit" name="all" value="1">
+                    Restore all
+                </button>
+            </p>
+            {% endif %}
+        </form>
+    </div>
+</details>
+{% endfor %}
+
+<script>
+    // Timestamps are stored in UTC; show them in the viewer's own timezone.
+    for (const el of document.querySelectorAll("time.local-time")) {
+        const date = new Date(el.getAttribute("datetime"));
+        if (!isNaN(date)) {
+            el.textContent = date.toLocaleString(undefined, {
+                dateStyle: "medium",
+                timeStyle: "short",
+            });
+        }
+    }
+</script>
+{% endblock %}

@@ -6,6 +6,7 @@ from spotipy import Spotify
 
 import playlists.playlist_cache as playlist_cache_module
 import playlists.playlist_filter as playlist_filter
+import playlists.removal_history as removal_history_module
 
 REMOVE_BATCH_SIZE = 100
 
@@ -59,11 +60,24 @@ def _chunks(items: list, size: int):
         yield items[i : i + size]
 
 
-def remove_tracks(sp: Spotify, playlist_id: str, uris: list[str]) -> None:
+def remove_tracks(
+    sp: Spotify, playlist_id: str, uris: list[str], source: str = "Playlist Cleanup"
+) -> str | None:
+    """Logs the removal to removal_history under source first; returns
+    that history entry's id (None if there was nothing to remove)."""
     if not uris:
-        return
+        return None
 
-    current_tracks = playlist_cache_module.get_playlist(sp, playlist_id)["tracks"]
+    playlist = playlist_cache_module.get_playlist(sp, playlist_id)
+    current_tracks = playlist["tracks"]
+    history_id = removal_history_module.record(
+        source,
+        [
+            removal_history_module.snapshot_removed(
+                playlist_id, playlist["name"], current_tracks, uris
+            )
+        ],
+    )
 
     batches = list(_chunks(uris, REMOVE_BATCH_SIZE))
     for i, batch in enumerate(batches, start=1):
@@ -92,3 +106,5 @@ def remove_tracks(sp: Spotify, playlist_id: str, uris: list[str]) -> None:
             playlist_id,
             exc_info=True,
         )
+
+    return history_id

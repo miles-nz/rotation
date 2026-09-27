@@ -147,7 +147,7 @@ def apply_step(sp: Spotify, cache: PlaylistCache, step: dict, result: Any, form)
             playlist_id, _, uri = item.partition("::")
             if playlist_id and uri:
                 removals.append({"playlist_id": playlist_id, "uri": uri})
-        duplicates_module.remove_from_playlists(sp, removals)
+        duplicates_module.remove_from_playlists(sp, removals, source=f"Cascade - {label}")
         for removal in removals:
             cache.remove_tracks(removal["playlist_id"], [removal["uri"]])
         return {"type": step_type, "label": label, "removed": len(removals)}
@@ -186,7 +186,9 @@ def apply_step(sp: Spotify, cache: PlaylistCache, step: dict, result: Any, form)
     if step_type == "playlist_cleanup":
         removal_uris = {r["uri"] for r in result["removals"]}
         selected_uris = [uri for uri in form.getlist("track") if uri in removal_uris]
-        playlist_cleanup_module.remove_tracks(sp, result["playlist_id"], selected_uris)
+        playlist_cleanup_module.remove_tracks(
+            sp, result["playlist_id"], selected_uris, source=f"Cascade - {label}"
+        )
         cache.remove_tracks(result["playlist_id"], selected_uris)
         return {
             "type": step_type,
