@@ -12,3 +12,4 @@ venv/
 .claude/
 CLAUDE.md
 removal_history.json
+diff_snoozes.json

@@ -28,7 +28,8 @@ background: var(--bg); } .diff-target { display: flex; align-items: center; gap:
     Found {{ missing|length }} track{{ 's' if missing|length != 1 else '' }} in
     the source playlist(s) that {{ "aren't" if missing|length != 1 else "isn't"
     }} in any of the target playlists. For each track, check which target
-    playlist(s) to add it to.
+    playlist(s) to add it to, or snooze it so it isn't suggested again for 30
+    days.
 </p>
 
 <form method="post" action="{{ form_action or url_for('playlist_diff_add') }}">
@@ -58,6 +59,10 @@ background: var(--bg); } .diff-target { display: flex; align-items: center; gap:
             <span>Add to "{{ t.name }}"</span>
         </label>
         {% endfor %}
+        <label class="diff-target">
+            <input type="checkbox" name="snooze" value="{{ track.uri }}" />
+            <span>Don't suggest for 30 days</span>
+        </label>
     </div>
     {% endfor %}
     <p style="margin-top: 1.5rem">
@@ -82,6 +87,19 @@ background: var(--bg); } .diff-target { display: flex; align-items: center; gap:
                 : "Continue without adding";
         }
         checkboxes.forEach((c) => c.addEventListener("change", updateLabel));
+        // Snoozing and adding are either/or for a track.
+        document.querySelectorAll('input[name="snooze"]').forEach((snooze) => {
+            snooze.addEventListener("change", () => {
+                snooze
+                    .closest(".diff-track")
+                    .querySelectorAll('input[name="add"]')
+                    .forEach((add) => {
+                        if (snooze.checked) add.checked = false;
+                        add.disabled = snooze.checked;
+                    });
+                updateLabel();
+            });
+        });
         updateLabel();
     })();
 </script>

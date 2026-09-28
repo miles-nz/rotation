@@ -13,6 +13,7 @@ import core.cascade_scheduler as cascade_scheduler
 from spotify.spotify_client import make_oauth, get_authenticated_client
 from core.sync import apply_diff, get_target_diff
 import playlists.cascade as cascade_module
+import playlists.diff_snoozes as diff_snoozes_module
 import playlists.duplicates as duplicates_module
 import playlists.playlist_cache as playlist_cache_module
 import playlists.playlist_filter as playlist_filter_module
@@ -1020,7 +1021,24 @@ def playlist_diff_picker():
         needs_credentials=False,
         logged_in=sp is not None,
         default_prefs=_default_preferences("playlist_diff", sp),
+        snoozes=diff_snoozes_module.list_active() if sp is not None else [],
     )
+
+
+@app.route("/playlist-diff/unsnooze", methods=["POST"])
+def playlist_diff_unsnooze():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    # uri as a form field rather than in the path - Spotify uris contain colons.
+    uri = request.form.get("uri")
+    if uri:
+        diff_snoozes_module.unsnooze(uri)
+    return redirect(url_for("playlist_diff_picker"))
 
 
 @app.route("/playlist-diff/scan")
@@ -1104,6 +1122,7 @@ def playlist_diff_add():
             additions.append({"playlist_id": playlist_id, "uri": uri})
 
     added_counts = playlist_diff_module.add_to_playlists(sp, additions)
+    snoozed = diff_snoozes_module.snooze(playlist_diff_module.snoozes_from_form(result, request.form))
     targets_by_id = {t["id"]: t["name"] for t in result["targets"]}
     added_summary = [
         {"name": targets_by_id[pid], "added": counts["added"], "local_skipped": counts["local_skipped"]}
@@ -1111,7 +1130,12 @@ def playlist_diff_add():
     ]
     _diff_job.result = None
 
-    return render_template("playlist_diff_done.html", added_summary=added_summary)
+    return render_template(
+        "playlist_diff_done.html",
+        added_summary=added_summary,
+        snoozed=snoozed,
+        snooze_days=diff_snoozes_module.SNOOZE_DAYS,
+    )
 
 
 # --- Playlist Search ------------------------------------------------------

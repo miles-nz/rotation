@@ -5,6 +5,7 @@ import logging
 from spotipy import Spotify
 
 from core.cancellation import CancelCheck
+import playlists.diff_snoozes as diff_snoozes
 import playlists.playlist_cache as playlist_cache_module
 import playlists.playlist_filter as playlist_filter
 
@@ -33,6 +34,10 @@ def find_missing_from_tracks(
     different version of a track already in the target isn't treated as
     missing) - deduped by uri, in reverse source playlist order:
     [{"uri", "name", "artists", "album"}]
+
+    Snoozed tracks (see diff_snoozes) are left out, matched the same way,
+    so every caller - standalone, Cascade and the scheduled auto-scan -
+    stops suggesting them.
     """
     seen: dict[str, dict] = {}
     for playlist in source_playlists:
@@ -51,11 +56,18 @@ def find_missing_from_tracks(
         for uri, t in reversed(seen.items())
         if uri not in target_uris and _signature(t) not in target_signatures
     ]
+
+    snoozes = diff_snoozes.active()
+    snoozed_signatures = {_signature(s) for s in snoozes.values()}
+    suggested = [
+        t for t in missing if t["uri"] not in snoozes and _signature(t) not in snoozed_signatures
+    ]
     logger.info(
-        "found %d track(s) in source playlist(s) missing from target playlist(s)",
-        len(missing),
+        "found %d track(s) in source playlist(s) missing from target playlist(s), %d snoozed",
+        len(suggested),
+        len(missing) - len(suggested),
     )
-    return missing
+    return suggested
 
 
 def find_missing(
@@ -80,6 +92,17 @@ def find_missing(
     targets = build(target_ids)
     missing = find_missing_from_tracks(sources, targets)
     return {"missing": missing, "targets": [{"id": t["id"], "name": t["name"]} for t in targets]}
+
+
+def snoozes_from_form(result: dict, form) -> list[dict]:
+    """The tracks from a find_missing result ticked "don't suggest" in the
+    submitted form. A track that's also being added isn't snoozed - it
+    won't be missing next time anyway."""
+    snooze_uris = set(form.getlist("snooze"))
+    adding_uris = {item.partition("::")[0] for item in form.getlist("add")}
+    return [
+        t for t in result["missing"] if t["uri"] in snooze_uris and t["uri"] not in adding_uris
+    ]
 
 
 def add_to_playlists(sp: Spotify, additions: list[dict], add_tracks=None) -> dict[str, dict]:

@@ -16,6 +16,12 @@ endblock %} {% block content %}
     </li>
     {% endfor %}
 </ul>
+{% endif %} {% if snoozed %}
+<p>
+    Snoozed {{ snoozed }} track{{ 's' if snoozed != 1 else '' }} - {{ 'they'
+    if snoozed != 1 else 'it' }} won't be suggested again for {{ snooze_days
+    }} days.
+</p>
 {% endif %}
 <p><a class="button" href="{{ url_for('playlist_diff_picker') }}">Back</a></p>
 {% endblock %}

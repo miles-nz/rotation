@@ -8,6 +8,7 @@ from spotipy import Spotify
 
 from core.cancellation import CancelCheck
 from playlists.playlist_cache import PlaylistCache
+import playlists.diff_snoozes as diff_snoozes_module
 import playlists.duplicates as duplicates_module
 import playlists.playlist_filter as playlist_filter_module
 import playlists.playlist_cleanup as playlist_cleanup_module
@@ -219,6 +220,7 @@ def apply_step(sp: Spotify, cache: PlaylistCache, step: dict, result: Any, form)
             return added, skipped, local_skipped
 
         added_counts = playlist_diff_module.add_to_playlists(sp, additions, add_tracks=_add_tracks)
+        snoozed = diff_snoozes_module.snooze(playlist_diff_module.snoozes_from_form(result, form))
 
         targets_by_id = {t["id"]: t["name"] for t in result["targets"]}
         added_summary = [
@@ -229,7 +231,12 @@ def apply_step(sp: Spotify, cache: PlaylistCache, step: dict, result: Any, form)
             }
             for pid, counts in added_counts.items()
         ]
-        return {"type": step_type, "label": label, "added_summary": added_summary}
+        return {
+            "type": step_type,
+            "label": label,
+            "added_summary": added_summary,
+            "snoozed": snoozed,
+        }
 
     if step_type == "sync":
         to_add, to_remove = result["to_add"], result["to_remove"]

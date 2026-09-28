@@ -66,6 +66,27 @@
     </p>
 </div>
 
+{% if snoozes %}
+<h2>Snoozed tracks</h2>
+<p class="hint">These won't be suggested by Playlist Diff until the date shown.</p>
+<ul>
+    {% for s in snoozes %}
+    <li>
+        {{ s.artists }} – {{ s.name }}
+        <span class="track-meta">until {{ s.until[:10] }}</span>
+        <form
+            method="post"
+            action="{{ url_for('playlist_diff_unsnooze') }}"
+            style="display: inline"
+        >
+            <input type="hidden" name="uri" value="{{ s.uri }}" />
+            <button class="button secondary" type="submit">Un-snooze</button>
+        </form>
+    </li>
+    {% endfor %}
+</ul>
+{% endif %}
+
 <script src="{{ url_for('static', filename='playlist_picker.js') }}"></script>
 <script>
     let currentSaved = {{ default_prefs | tojson }};
