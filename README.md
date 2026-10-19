@@ -72,9 +72,9 @@ functions. Currently available:
   player. Tracks already in one of your playlists or Liked Songs are still
   shown, flagged with where they are. Select the ones you want and add them
   to an existing or new playlist; any that can't be found on Spotify are
-  listed separately. The first run builds your full Last.fm listening
-  history index, which can take several minutes. Requires Last.fm to be
-  configured (see Setup).
+  listed separately. The first run downloads your full Last.fm listening
+  history (see Listening history below), which takes about 20 minutes.
+  Requires Last.fm to be configured (see Setup).
 - **Removal History** - every track Duplicate Finder or Playlist Cleanup
   removes (standalone or in a Cascade) is logged, keeping the last 20
   removals, so you can put tracks back later - all of them or just the
@@ -120,6 +120,24 @@ functions. Currently available:
     it finishes you get a preview of the changes (tracks to add/remove) -
     review it and select what you actually want, then apply to make the
     change in Spotify.
+
+## Listening history
+
+Forgotten Favourites and Most Played's First/Last Played filters use a local
+copy of every Last.fm scrobble, kept in a SQLite database at
+`.lastfm_cache/scrobbles.sqlite3`. The first tool that needs it downloads
+your full history (about 20 minutes, with a progress screen and **Cancel** -
+a cancelled download carries on where it stopped next time); after that,
+each run only fetches new scrobbles.
+
+Local runs and Railway each keep their own copy, so each downloads your
+history once. To back up a copy (or move it between them), snapshot it with
+SQLite rather than copying the file directly, since recent writes can still
+be in a separate `-wal` file:
+
+```bash
+sqlite3 .lastfm_cache/scrobbles.sqlite3 ".backup scrobbles-backup.sqlite3"
+```
 
 ## Deploying to Railway
 

@@ -180,28 +180,58 @@ def _top_tag_names(payload: dict, limit: int) -> list[str]:
     return [t["name"] for t in tags][:limit]
 
 
+# Last.fm's grey star "no artwork" image, returned instead of an empty URL
+# for some albums.
+_PLACEHOLDER_IMAGE_ID = "2a96cbd8b46e442fc41c2b86b821562f"
+
+
+def _largest_image_url(images) -> str | None:
+    """The URL of the largest size in a Last.fm "image" list (sizes come
+    smallest first), or None if it's missing or the placeholder."""
+    images = _as_list(images)
+    url = images[-1].get("#text", "") if images else ""
+    if not url or _PLACEHOLDER_IMAGE_ID in url:
+        return None
+    return url
+
+
 def get_recent_tracks(
-    username: str | None = None, limit: int = 200, page: int = 1, from_ts: int | None = None
+    username: str | None = None,
+    limit: int = 200,
+    page: int = 1,
+    from_ts: int | None = None,
+    to_ts: int | None = None,
 ) -> tuple[list[dict], dict]:
     """One page of scrobble history, newest first. Returns
-    ([{"artist", "name", "album", "timestamp"}, ...], {"page", "total_pages"}).
-    "album" is "" when Last.fm has no album tag for that scrobble. Skips the
-    in-progress "now playing" entry, if present - it has no "date" yet since
-    it hasn't finished being scrobbled. from_ts, if given, only returns
-    scrobbles after that unix timestamp (for incremental syncs - avoids
-    re-walking already-seen history).
+    ([{"artist", "artist_mbid", "name", "mbid", "album", "album_mbid",
+    "image_url", "timestamp"}, ...], {"page", "total_pages"}).
+    "album" is "" when Last.fm has no album tag for that scrobble; the
+    MusicBrainz IDs and image_url are None when Last.fm doesn't have one.
+    Skips the in-progress "now playing" entry, if present - it has no "date"
+    yet since it hasn't finished being scrobbled.
+
+    from_ts/to_ts, if given, limit it to scrobbles in [from_ts, to_ts) -
+    Last.fm treats "from" as inclusive and "to" as exclusive (checked
+    against the live API). A fixed to_ts also keeps page numbers stable
+    while new scrobbles arrive during a long multi-page walk.
     """
     params = {"user": username or _username(), "limit": limit, "page": page}
     if from_ts is not None:
         params["from"] = from_ts
+    if to_ts is not None:
+        params["to"] = to_ts
     payload = _get("user.getrecenttracks", **params)
     recenttracks = payload.get("recenttracks", {})
     attr = recenttracks.get("@attr", {})
     tracks = [
         {
             "artist": t["artist"]["#text"],
+            "artist_mbid": t["artist"].get("mbid") or None,
             "name": t["name"],
+            "mbid": t.get("mbid") or None,
             "album": (t.get("album") or {}).get("#text", ""),
+            "album_mbid": (t.get("album") or {}).get("mbid") or None,
+            "image_url": _largest_image_url(t.get("image")),
             "timestamp": int(t["date"]["uts"]),
         }
         for t in _as_list(recenttracks.get("track"))
