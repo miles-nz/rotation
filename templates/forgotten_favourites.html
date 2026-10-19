@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Forgotten Favourites - Rotation{% endblock %}
+{% block extra_style %}
+.number-input { width: 6rem; }
+{% endblock %}
+{% block content %}
+<h1>Forgotten Favourites</h1>
+<p>
+    Find tracks you've played a lot on Last.fm but haven't played in a
+    while, so you can rediscover them and add them to a playlist. Tracks
+    already in one of your playlists or Liked Songs are still shown, flagged
+    with where they are.
+</p>
+
+{% if needs_credentials %}
+<p class="warning">
+    No Spotify credentials found. Copy <code>.env.example</code> to
+    <code>.env</code> and fill in <code>SPOTIFY_CLIENT_ID</code> and
+    <code>SPOTIFY_CLIENT_SECRET</code>, then restart the app. See the README for
+    how to register a Spotify app.
+</p>
+{% elif needs_lastfm %}
+<p class="warning">
+    No Last.fm credentials found. Copy <code>.env.example</code> to
+    <code>.env</code> and fill in <code>LASTFM_API_KEY</code> and
+    <code>LASTFM_USERNAME</code>, then restart the app. See the README for
+    how to get a free Last.fm API key.
+</p>
+{% elif not logged_in %}
+<p><a class="button" href="{{ url_for('login') }}">Log in with Spotify</a></p>
+{% else %}
+<form method="get" action="{{ url_for('forgotten_favourites_scan') }}" id="picker-form">
+    <fieldset>
+        <legend>Played at least</legend>
+        <input class="number-input" type="number" name="min_plays" id="min-plays" min="1" value="20" required />
+        times (all time)
+    </fieldset>
+
+    <fieldset>
+        <legend>But not played in the last</legend>
+        <input class="number-input" type="number" name="months" id="months" min="1" value="6" required />
+        months
+    </fieldset>
+
+    <p class="hint">
+        The first run builds your full listening history index to find when
+        you last played each track - this can take several minutes, but only
+        happens once (it stays cached and updates quickly after that).
+    </p>
+
+    <p>
+        <button class="button" type="submit">Find forgotten favourites</button>
+    </p>
+</form>
+{% endif %} {% endblock %}

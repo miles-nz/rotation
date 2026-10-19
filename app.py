@@ -23,6 +23,7 @@ import playlists.playlist_prepend as playlist_prepend_module
 import playlists.playlist_search as playlist_search_module
 import playlists.playlist_swap as playlist_swap_module
 import playlists.removal_history as removal_history_module
+import lastfm.forgotten_favourites as forgotten_favourites_module
 import lastfm.lastfm_client as lastfm_client_module
 import lastfm.most_played as most_played_module
 
@@ -129,6 +130,15 @@ _prepend_job = BackgroundJob(["playlists.playlist_prepend", "app"])
 _cascade_job = BackgroundJob(["playlists.playlist_cache", "app"])
 _most_played_job = BackgroundJob(["lastfm.most_played", "lastfm.scrobble_history", "app"])
 _swap_job = BackgroundJob(["playlists.playlist_swap", "app"])
+_forgotten_job = BackgroundJob(
+    [
+        "lastfm.forgotten_favourites",
+        "lastfm.most_played",
+        "lastfm.scrobble_history",
+        "playlists.playlist_cache",
+        "app",
+    ]
+)
 _cascade_run: cascade_module.CascadeRun | None = None
 
 # Gunicorn imports this file as the "app" module (not "__main__"), so it
@@ -278,6 +288,17 @@ def _run_most_played_scan(entity_type: str, period: str, count: int, criteria: l
             sp, entity_type, period, count, criteria, cancel_check=cancel_check
         )
         return {"entity_type": entity_type, "count": count, **result}
+
+    return target
+
+
+def _run_forgotten_favourites_scan(min_plays: int, months: int):
+    def target(cancel_check):
+        sp = get_authenticated_client()
+        result = forgotten_favourites_module.find_forgotten_favourites(
+            sp, min_plays, months, cancel_check=cancel_check
+        )
+        return {"min_plays": min_plays, "months": months, **result}
 
     return target
 
@@ -1582,6 +1603,135 @@ def most_played_apply():
 
     return render_template(
         "most_played_done.html",
+        added=added,
+        skipped=skipped,
+        local_skipped=local_skipped,
+        playlist_name=playlist_name,
+    )
+
+
+# --- Forgotten Favourites --------------------------------------------------
+# Tracks with a lot of all-time scrobbles that haven't been played in a
+# while, so they can be rediscovered. Separate from Most Played so its form
+# is just the two questions that matter here; manual only, not a Cascade
+# step.
+
+
+@app.route("/forgotten-favourites")
+def forgotten_favourites_picker():
+    if not _credentials_configured():
+        return render_template("forgotten_favourites.html", needs_credentials=True)
+
+    sp = get_authenticated_client()
+    return render_template(
+        "forgotten_favourites.html",
+        needs_credentials=False,
+        needs_lastfm=not _lastfm_configured(),
+        logged_in=sp is not None,
+    )
+
+
+@app.route("/forgotten-favourites/scan")
+def forgotten_favourites_scan():
+    if not _credentials_configured() or not _lastfm_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    min_plays = request.args.get("min_plays", type=int)
+    months = request.args.get("months", type=int)
+    if not min_plays or not months or min_plays < 1 or months < 1:
+        return redirect(url_for("forgotten_favourites_picker"))
+
+    _forgotten_job.start(_run_forgotten_favourites_scan(min_plays, months))
+
+    return render_template(
+        "progress.html",
+        status_url=url_for("forgotten_favourites_scan_status"),
+        cancel_url=url_for("forgotten_favourites_scan_cancel"),
+        result_url=url_for("forgotten_favourites_scan_result"),
+        back_url=url_for("forgotten_favourites_picker"),
+        heading="Looking for forgotten favourites…",
+        description="Updating your Last.fm listening history, finding tracks you've played a lot but not recently, resolving each one on Spotify, then checking your playlists and Liked Songs for ones you already have. The first run builds your full listening history index, which can take several minutes - after that it's cached and only tops up what's new.",
+    )
+
+
+@app.route("/forgotten-favourites/scan/status")
+def forgotten_favourites_scan_status():
+    return jsonify(_forgotten_job.status())
+
+
+@app.route("/forgotten-favourites/scan/cancel", methods=["POST"])
+def forgotten_favourites_scan_cancel():
+    _forgotten_job.cancel()
+    return jsonify({"ok": True})
+
+
+@app.route("/forgotten-favourites/scan/result")
+def forgotten_favourites_scan_result():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    result = _forgotten_job.result
+    if result is None:
+        return redirect(url_for("forgotten_favourites_picker"))
+
+    return render_template(
+        "forgotten_favourites_result.html",
+        results=result["results"],
+        unmatched=result["unmatched"],
+        no_history_count=result["no_history_count"],
+        truncated=result["truncated"],
+        max_results=forgotten_favourites_module.MAX_RESULTS,
+        min_plays=result["min_plays"],
+        months=result["months"],
+    )
+
+
+@app.route("/forgotten-favourites/apply", methods=["POST"])
+def forgotten_favourites_apply():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    result = _forgotten_job.result
+    if result is None:
+        return redirect(url_for("forgotten_favourites_picker"))
+
+    result_uris = {t["uri"] for t in result["results"]}
+    selected_uris = [uri for uri in request.form.getlist("track") if uri in result_uris]
+    if not selected_uris:
+        return redirect(url_for("forgotten_favourites_scan_result"))
+
+    destination_mode = request.form.get("destination_mode")
+    if destination_mode == "new":
+        destination_name = request.form.get("destination_name", "").strip()
+        if not destination_name:
+            return redirect(url_for("forgotten_favourites_scan_result"))
+        playlist_id = playlist_filter_module.create_playlist(sp, destination_name)
+        playlist_name = destination_name
+    else:
+        playlist_id = request.form.get("destination_playlist_id")
+        playlist_name = request.form.get("destination_playlist_name")
+        if not playlist_id:
+            return redirect(url_for("forgotten_favourites_scan_result"))
+
+    added, skipped, local_skipped = playlist_filter_module.add_tracks_to_playlist(
+        sp, playlist_id, selected_uris
+    )
+    _forgotten_job.result = None
+
+    return render_template(
+        "forgotten_favourites_done.html",
         added=added,
         skipped=skipped,
         local_skipped=local_skipped,

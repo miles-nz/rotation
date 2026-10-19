@@ -1,0 +1,16 @@
+{% extends "base.html" %} {% block title %}Done - Rotation{%
+endblock %} {% block content %}
+<h1>Done</h1>
+<p>
+    Added {{ added }} track{{ 's' if added != 1 else '' }} to "{{ playlist_name
+    }}"{% if skipped %} ({{ skipped }} already there, skipped){% endif %}.
+</p>
+{% if local_skipped %}
+<p class="hint">
+    {{ local_skipped }} local file{{ 's' if local_skipped != 1 else '' }}
+    matched but couldn't be added - Spotify's API doesn't support adding
+    local files to a playlist.
+</p>
+{% endif %}
+<p><a class="button" href="{{ url_for('forgotten_favourites_picker') }}">Back</a></p>
+{% endblock %}

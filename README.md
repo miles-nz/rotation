@@ -64,6 +64,17 @@ functions. Currently available:
   your history until it finds 200 that qualify. Tracks can be added to an
   existing or new playlist; albums and artists are read-only. Requires
   Last.fm to be configured (see Setup).
+- **Forgotten Favourites** - find tracks you played a lot but haven't
+  played in a while: pick a minimum all-time play count and how many months
+  it's been since you last played them (e.g. at least 20 plays, not in the
+  last 6 months). Results are listed most played first with their play
+  count and last-played date, and can be previewed with the embedded
+  player. Tracks already in one of your playlists or Liked Songs are still
+  shown, flagged with where they are. Select the ones you want and add them
+  to an existing or new playlist; any that can't be found on Spotify are
+  listed separately. The first run builds your full Last.fm listening
+  history index, which can take several minutes. Requires Last.fm to be
+  configured (see Setup).
 - **Removal History** - every track Duplicate Finder or Playlist Cleanup
   removes (standalone or in a Cascade) is logged, keeping the last 20
   removals, so you can put tracks back later - all of them or just the
@@ -90,8 +101,9 @@ functions. Currently available:
    `SPOTIFY_CLIENT_SECRET` (`SPOTIFY_REDIRECT_URI` is already set to match
    the redirect URI above).
 
-    Optionally, to enable Most Played and Album Swap's album suggestions,
-    also fill in `LASTFM_API_KEY` and `LASTFM_USERNAME` - get a free API key
+    Optionally, to enable Most Played, Forgotten Favourites and Album Swap's
+    album suggestions, also fill in `LASTFM_API_KEY` and `LASTFM_USERNAME` -
+    get a free API key
     at https://www.last.fm/api/account/create. Everything else works
     without them.
 
