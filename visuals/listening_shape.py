@@ -26,8 +26,9 @@ def build(sp: Spotify | None, from_ts: int, to_ts: int, cancel_check: CancelChec
     time). Album art comes from the Last.fm image already stored for each
     album; albums without one fall back to a Spotify album search (cached
     in the resolve cache, so each is only searched once), skipped if sp is
-    None. Returns {"plays": [{"t", "n", "a", "c"}, ...], "no_art_count"},
-    where "c" is "#rrggbb" or None for no art."""
+    None. Returns {"plays": [{"t", "n", "a", "al", "c"}, ...],
+    "no_art_count"}: timestamp, track, artist, album ("" if none) and the
+    album's dominant colour, "#rrggbb" or None for no art."""
     scrobble_history.sync(cancel_check)
     scrobbles = scrobble_history.scrobbles_between(from_ts, to_ts)
     art = album_colours.art_by_album(sp, scrobbles, cancel_check)
@@ -36,7 +37,15 @@ def build(sp: Spotify | None, from_ts: int, to_ts: int, cancel_check: CancelChec
     plays = []
     for s in scrobbles:
         url = art.get(resolve_cache.album_key(s["artist"], s["album"])) if s["album"] else None
-        plays.append({"t": s["timestamp"], "n": s["name"], "a": s["artist"], "c": colours.get(url) if url else None})
+        plays.append(
+            {
+                "t": s["timestamp"],
+                "n": s["name"],
+                "a": s["artist"],
+                "al": s["album"],
+                "c": colours.get(url) if url else None,
+            }
+        )
     no_art_count = sum(1 for p in plays if p["c"] is None)
     logger.info("listening shape: %d play(s), %d without album art", len(plays), no_art_count)
     return {"plays": plays, "no_art_count": no_art_count}

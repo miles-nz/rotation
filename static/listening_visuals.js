@@ -48,15 +48,22 @@ const ListeningVisuals = (() => {
         return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
     }
 
-    // {range, start, end} -> the local days it covers as {fromTs, toTs} in
-    // unix seconds (toTs exclusive), plus the first and last day. range is
-    // a number of days ("30"), months ("12m") or "all" - each ending today
-    // - or "custom" for the inclusive start and end dates. "all" starts at
-    // 0 and has no start date; the server only returns what exists.
+    // {range, start, end, month} -> the local days it covers as
+    // {fromTs, toTs} in unix seconds (toTs exclusive), plus the first and
+    // last day. range is a number of days ("30"), months ("12m") or "all" -
+    // each ending today - "custom" for the inclusive start and end dates,
+    // or "month" for the calendar month in `month` ("YYYY-MM", default this
+    // month). "all" starts at 0 and has no start date; the server only
+    // returns what exists.
     function rangeBounds(settings) {
         const today = startOfDay(new Date());
         let start = null;
         let end = null;
+        if (settings.range === "month") {
+            const match = /^(\d{4})-(\d{2})$/.exec(settings.month || "");
+            start = match ? new Date(+match[1], +match[2] - 1, 1) : new Date(today.getFullYear(), today.getMonth(), 1);
+            end = new Date(start.getFullYear(), start.getMonth() + 1, 0);
+        }
         if (settings.range === "custom") {
             start = parseDate(settings.start);
             end = parseDate(settings.end);
@@ -90,6 +97,7 @@ const ListeningVisuals = (() => {
             range: settings.range,
             start: bounds.start,
             end: bounds.end,
+            month: bounds.start.slice(0, 7),
         });
         return `${visual.prepare_url}?${params}`;
     }

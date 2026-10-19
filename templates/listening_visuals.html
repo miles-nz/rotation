@@ -10,13 +10,16 @@
 .visual-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 1rem 0; }
 .visual-controls .custom-range { display: none; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .visual-controls.custom .custom-range { display: flex; }
-.shape-picker { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 1rem 0 0.25rem; }
-.shape-picker button {
+.pill-picker { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 1rem 0 0.25rem; }
+.pill-picker button {
   font: inherit; font-size: 0.9rem; padding: 0.35rem 0.75rem; border-radius: 999px; cursor: pointer;
   border: 1px solid var(--border); background: var(--bg); color: var(--text);
 }
-.shape-picker button:hover { background: var(--hover-bg); }
-.shape-picker button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); color: white; }
+.pill-picker button:hover { background: var(--hover-bg); }
+.pill-picker button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); color: white; }
+.month-nav { display: flex; align-items: center; gap: 0.5rem; margin: 1rem 0; }
+.month-nav .month-label { min-width: 9rem; text-align: center; font-weight: 600; }
+.month-nav button:disabled { opacity: 0.4; cursor: default; }
 .visual-summary { color: var(--muted); font-size: 0.9rem; margin: 0.5rem 0; }
 .visual-wrap { position: relative; width: 100%; max-width: 40rem; margin: 0 auto; touch-action: manipulation; }
 .visual-wrap canvas { display: block; width: 100%; height: auto; }
@@ -71,7 +74,7 @@
     strand. Switch shapes to see the same plays in different ways.
 </p>
 
-<div class="shape-picker" id="shape-picker" role="group" aria-label="Shape"></div>
+<div class="pill-picker" id="shape-picker" role="group" aria-label="Shape"></div>
 <p class="hint" id="shape-description"></p>
 
 <form class="visual-controls" id="shape-controls">
@@ -166,6 +169,45 @@
         times: {{ river.times | tojson }},
         artistIds: {{ river.artist_ids | tojson }},
         artists: {{ river.artists | tojson }},
+    });
+</script>
+{% elif view == "month" %}
+<p>
+    Each tile is coloured by the album art of what you played in it, so
+    each month becomes its own abstract picture. Pick how the colours are
+    laid out: just the colour of the album you played most, a blend, a
+    woven mosaic, stripes or a gradient.
+</p>
+
+<div class="pill-picker" id="month-layout" role="group" aria-label="Layout"></div>
+<div class="pill-picker" id="month-style" role="group" aria-label="Colour style"></div>
+<p class="hint" id="month-description"></p>
+
+<div class="month-nav">
+    <button class="button secondary" type="button" id="month-prev" aria-label="Previous month">‹</button>
+    <span class="month-label" id="month-label"></span>
+    <button class="button secondary" type="button" id="month-next" aria-label="Next month">›</button>
+</div>
+
+<p class="visual-summary" id="month-summary"></p>
+<div class="visual-wrap" id="month-wrap">
+    <canvas id="month-canvas" role="img" aria-label="Colour of your month"></canvas>
+    <canvas id="month-overlay" class="overlay" aria-hidden="true"></canvas>
+    <div class="visual-tooltip" id="month-tooltip"></div>
+</div>
+<p>
+    <button class="button secondary" type="button" id="month-download">Download PNG</button>
+</p>
+
+<script src="{{ url_for('static', filename='listening_visuals.js') }}"></script>
+<script src="{{ url_for('static', filename='colour_month.js') }}"></script>
+<script>
+    ListeningVisuals.init({{ visuals | tojson }});
+    ListeningVisuals.bindTabs();
+    ColourMonth.init({
+        fromTs: {{ month.from_ts }},
+        toTs: {{ month.to_ts }},
+        plays: {{ month.plays | tojson }},
     });
 </script>
 {% endif %}

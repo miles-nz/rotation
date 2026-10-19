@@ -324,6 +324,17 @@ def _run_listening_shape(from_ts: int, to_ts: int, settings: dict):
     return target
 
 
+def _run_colour_month(from_ts: int, to_ts: int, settings: dict):
+    def target(cancel_check):
+        sp = get_authenticated_client()
+        # The same plays-with-album-colours Listening Shape draws - the
+        # month's tiles are worked out in the browser.
+        result = listening_shape_module.build(sp, from_ts, to_ts, cancel_check=cancel_check)
+        return {"view": "month", "from_ts": from_ts, "to_ts": to_ts, "settings": settings, **result}
+
+    return target
+
+
 def _run_artist_river(from_ts: int, to_ts: int, settings: dict):
     def target(cancel_check):
         sp = get_authenticated_client()
@@ -1800,6 +1811,12 @@ LISTENING_VISUALS = [
         "prepare_endpoint": "artist_river_prepare",
         "default_range": "12m",
     },
+    {
+        "key": "month",
+        "label": "Colour of your month",
+        "prepare_endpoint": "colour_month_prepare",
+        "default_range": "month",
+    },
 ]
 
 
@@ -1837,6 +1854,7 @@ def _visual_settings(default_range: str) -> dict:
         "range": request.args.get("range", default_range),
         "start": request.args.get("start", ""),
         "end": request.args.get("end", ""),
+        "month": request.args.get("month", ""),
     }
 
 
@@ -1910,6 +1928,49 @@ def artist_river():
         logged_in=True,
         view="river",
         river=result,
+    )
+
+
+@app.route("/listening-visuals/month/prepare")
+def colour_month_prepare():
+    if not _credentials_configured() or not _lastfm_configured():
+        return redirect(url_for("listening_visuals"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    from_ts = request.args.get("from_ts", type=int)
+    to_ts = request.args.get("to_ts", type=int)
+    # One calendar month, plus a day of slack for daylight saving changes.
+    if from_ts is None or to_ts is None or not 0 < to_ts - from_ts <= 32 * 24 * 60 * 60:
+        return redirect(url_for("listening_visuals"))
+
+    _visuals_job.start(_run_colour_month(from_ts, to_ts, _visual_settings("month")))
+
+    return render_template(
+        "progress.html",
+        status_url=url_for("listening_visuals_status"),
+        cancel_url=url_for("listening_visuals_cancel"),
+        result_url=url_for("colour_month"),
+        back_url=url_for("home"),
+        heading="Mixing the colour of your month…",
+        description="Updating your Last.fm listening history, then working out the colour of each album's art. The first time, this downloads your full listening history, which takes about 20 minutes - after that it only fetches what's new.",
+    )
+
+
+@app.route("/listening-visuals/month")
+def colour_month():
+    result = _visuals_job.result
+    if not _credentials_configured() or result is None or result.get("view") != "month":
+        return redirect(url_for("listening_visuals"))
+
+    return _listening_visuals_template(
+        needs_credentials=False,
+        needs_lastfm=False,
+        logged_in=True,
+        view="month",
+        month=result,
     )
 
 

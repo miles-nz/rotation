@@ -95,8 +95,18 @@ functions. Currently available:
   top, so the river's width is all your listening. Show the last 3, 6 or
   12 months, all time or a custom range - ranges over two years are drawn
   by month. Hover a band to see that artist's plays that week, and
-  download the river as a PNG. Each visualisation's settings are
-  remembered in the browser. Read-only. Requires Last.fm to be configured
+  download the river as a PNG. **Colour of your month** turns a month into
+  tiles coloured by the album art of what you played in each, in one of
+  five styles: top album (the colour of the album you played most), blend
+  (every play's colour mixed in OKLab, which keeps mixes from turning
+  muddy), weave (a mosaic shared out between albums by plays), stripes
+  (each play as a band, in order, as wide as it lasted) or gradient
+  (flowing through the album colours in the order played).
+  Choose a calendar with one tile per day, or an hour grid with one row
+  per day and one column per hour. Step back through past months, hover a
+  tile for its plays, top albums and top tracks, and download the picture
+  as a PNG. Each
+  visualisation's settings are remembered in the browser. Read-only. Requires Last.fm to be configured
   (see Setup), and the first run downloads your listening history (see
   Listening history below).
 - **Removal History** - every track Duplicate Finder or Playlist Cleanup
