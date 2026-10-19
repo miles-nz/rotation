@@ -75,6 +75,20 @@ functions. Currently available:
   listed separately. The first run downloads your full Last.fm listening
   history (see Listening history below), which takes about 20 minutes.
   Requires Last.fm to be configured (see Setup).
+- **Listening Visuals** - your Last.fm listening history as art.
+  **Listening Shape** draws every track you played as a glowing stroke,
+  placed by when you played it (in your browser's time zone) and coloured
+  from its album art, so each listening session reads as one strand. Switch
+  instantly between five shapes: a clock (one ring per day), a week clock
+  (one ring per week, Monday to Sunday), day rows, week rows, and a long
+  exposure (every day stacked onto one 24-hour ring, so the times you
+  listen most glow brightest). Show the last 7, 30 or 90 days, the last 12
+  months or a custom range of up to a year, hover a strand to see what it
+  was, and download the picture as a PNG. The shape and range you last used
+  are remembered in the browser. Album art comes from Last.fm, with a
+  Spotify search for albums Last.fm has no art for. Read-only. Requires
+  Last.fm to be configured (see Setup), and the first run downloads your
+  listening history (see Listening history below).
 - **Removal History** - every track Duplicate Finder or Playlist Cleanup
   removes (standalone or in a Cascade) is logged, keeping the last 20
   removals, so you can put tracks back later - all of them or just the
@@ -123,8 +137,8 @@ functions. Currently available:
 
 ## Listening history
 
-Forgotten Favourites and Most Played's First/Last Played filters use a local
-copy of every Last.fm scrobble, kept in a SQLite database at
+Forgotten Favourites, Listening Visuals and Most Played's First/Last Played
+filters use a local copy of every Last.fm scrobble, kept in a SQLite database at
 `.lastfm_cache/scrobbles.sqlite3`. The first tool that needs it downloads
 your full history (about 20 minutes, with a progress screen and **Cancel** -
 a cancelled download carries on where it stopped next time); after that,

@@ -26,6 +26,7 @@ import playlists.removal_history as removal_history_module
 import lastfm.forgotten_favourites as forgotten_favourites_module
 import lastfm.lastfm_client as lastfm_client_module
 import lastfm.most_played as most_played_module
+import visuals.listening_shape as listening_shape_module
 
 load_dotenv()
 
@@ -136,6 +137,15 @@ _forgotten_job = BackgroundJob(
         "lastfm.most_played",
         "lastfm.scrobble_history",
         "playlists.playlist_cache",
+        "app",
+    ]
+)
+_visuals_job = BackgroundJob(
+    [
+        "lastfm.scrobble_history",
+        "lastfm.most_played",
+        "visuals.album_colours",
+        "visuals.listening_shape",
         "app",
     ]
 )
@@ -299,6 +309,15 @@ def _run_forgotten_favourites_scan(min_plays: int, months: int):
             sp, min_plays, months, cancel_check=cancel_check
         )
         return {"min_plays": min_plays, "months": months, **result}
+
+    return target
+
+
+def _run_listening_shape(from_ts: int, to_ts: int, settings: dict):
+    def target(cancel_check):
+        sp = get_authenticated_client()
+        result = listening_shape_module.build(sp, from_ts, to_ts, cancel_check=cancel_check)
+        return {"view": "shape", "from_ts": from_ts, "to_ts": to_ts, "settings": settings, **result}
 
     return target
 
@@ -1745,6 +1764,104 @@ def forgotten_favourites_apply():
         skipped=skipped,
         local_skipped=local_skipped,
         playlist_name=playlist_name,
+    )
+
+
+# --- Listening Visuals ----------------------------------------------------
+# Read-only, artistic views of Last.fm listening history, drawn from the
+# local scrobble store. One page with a switcher between visualisations.
+# The chosen visualisation and range are remembered in the browser, and
+# days/times are worked out there too (in its local time zone - the server
+# runs in UTC), so the bare page just hands off to the browser, which
+# redirects to the last-used visualisation's prepare route with UTC
+# timestamps. Manual only, not a Cascade step.
+
+LISTENING_VISUALS = [
+    {"key": "shape", "label": "Listening Shape", "prepare_endpoint": "listening_shape_prepare"},
+]
+
+
+def _listening_visuals_template(**context):
+    visuals = [
+        {"key": v["key"], "label": v["label"], "prepare_url": url_for(v["prepare_endpoint"])}
+        for v in LISTENING_VISUALS
+    ]
+    return render_template("listening_visuals.html", visuals=visuals, **context)
+
+
+@app.route("/listening-visuals")
+def listening_visuals():
+    if not _credentials_configured():
+        return _listening_visuals_template(needs_credentials=True, view=None)
+
+    sp = get_authenticated_client()
+    return _listening_visuals_template(
+        needs_credentials=False,
+        needs_lastfm=not _lastfm_configured(),
+        logged_in=sp is not None,
+        view=None,
+    )
+
+
+@app.route("/listening-visuals/shape/prepare")
+def listening_shape_prepare():
+    if not _credentials_configured() or not _lastfm_configured():
+        return redirect(url_for("listening_visuals"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    from_ts = request.args.get("from_ts", type=int)
+    to_ts = request.args.get("to_ts", type=int)
+    # A day of slack for daylight saving changes, since the browser picks
+    # the range in local days.
+    max_span = (listening_shape_module.MAX_DAYS + 1) * 24 * 60 * 60
+    if from_ts is None or to_ts is None or not 0 < to_ts - from_ts <= max_span:
+        return redirect(url_for("listening_visuals"))
+    settings = {
+        "range": request.args.get("range", "30"),
+        "start": request.args.get("start", ""),
+        "end": request.args.get("end", ""),
+    }
+
+    _visuals_job.start(_run_listening_shape(from_ts, to_ts, settings))
+
+    return render_template(
+        "progress.html",
+        status_url=url_for("listening_visuals_status"),
+        cancel_url=url_for("listening_visuals_cancel"),
+        result_url=url_for("listening_shape"),
+        back_url=url_for("home"),
+        heading="Drawing your listening shape…",
+        description="Updating your Last.fm listening history, then working out the colour of each album's art. The first time, this downloads your full listening history, which takes about 20 minutes - after that it only fetches what's new.",
+    )
+
+
+@app.route("/listening-visuals/status")
+def listening_visuals_status():
+    return jsonify(_visuals_job.status())
+
+
+@app.route("/listening-visuals/cancel", methods=["POST"])
+def listening_visuals_cancel():
+    _visuals_job.cancel()
+    return jsonify({"ok": True})
+
+
+@app.route("/listening-visuals/shape")
+def listening_shape():
+    result = _visuals_job.result
+    if not _credentials_configured() or result is None or result.get("view") != "shape":
+        return redirect(url_for("listening_visuals"))
+
+    return _listening_visuals_template(
+        needs_credentials=False,
+        needs_lastfm=False,
+        logged_in=True,
+        view="shape",
+        shape=result,
+        max_days=listening_shape_module.MAX_DAYS,
     )
 
 

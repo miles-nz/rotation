@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Listening Visuals - Rotation{% endblock %}
+{% block extra_style %}
+.visual-tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); margin: 1rem 0; }
+.visual-tabs a {
+  padding: 0.5rem 0.9rem; text-decoration: none; color: var(--muted);
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.visual-tabs a.active { color: var(--text); border-bottom-color: var(--accent); }
+.visual-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 1rem 0; }
+.visual-controls .custom-range { display: none; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.visual-controls.custom .custom-range { display: flex; }
+.shape-picker { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 1rem 0 0.25rem; }
+.shape-picker button {
+  font: inherit; font-size: 0.9rem; padding: 0.35rem 0.75rem; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text);
+}
+.shape-picker button:hover { background: var(--hover-bg); }
+.shape-picker button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); color: white; }
+.visual-summary { color: var(--muted); font-size: 0.9rem; margin: 0.5rem 0; }
+.shape-wrap { position: relative; width: 100%; max-width: 40rem; margin: 0 auto; touch-action: manipulation; }
+.shape-wrap canvas { display: block; width: 100%; height: auto; }
+.shape-wrap canvas.overlay { position: absolute; inset: 0; pointer-events: none; }
+.shape-tooltip {
+  position: absolute; pointer-events: none; display: none; z-index: 1;
+  background: var(--panel-bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.4rem 0.6rem; font-size: 0.85rem; line-height: 1.35;
+  max-width: 16rem; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+.shape-tooltip .when { color: var(--muted); }
+{% endblock %}
+{% block content %}
+<h1>Listening Visuals</h1>
+
+{% if needs_credentials %}
+<p class="warning">
+    No Spotify credentials found. Copy <code>.env.example</code> to
+    <code>.env</code> and fill in <code>SPOTIFY_CLIENT_ID</code> and
+    <code>SPOTIFY_CLIENT_SECRET</code>, then restart the app. See the README for
+    how to register a Spotify app.
+</p>
+{% elif needs_lastfm %}
+<p class="warning">
+    No Last.fm credentials found. Copy <code>.env.example</code> to
+    <code>.env</code> and fill in <code>LASTFM_API_KEY</code> and
+    <code>LASTFM_USERNAME</code>, then restart the app. See the README for
+    how to get a free Last.fm API key.
+</p>
+{% elif not logged_in %}
+<p><a class="button" href="{{ url_for('login') }}">Log in with Spotify</a></p>
+{% elif view is none %}
+<p class="hint" id="loading">Loading…</p>
+<script src="{{ url_for('static', filename='listening_visuals.js') }}"></script>
+<script>
+    ListeningVisuals.init({{ visuals | tojson }});
+    ListeningVisuals.openSaved();
+</script>
+{% else %}
+{% if visuals | length > 1 %}
+<nav class="visual-tabs">
+    {% for v in visuals %}
+    <a href="#" data-view="{{ v.key }}" class="{{ 'active' if v.key == view }}">{{ v.label }}</a>
+    {% endfor %}
+</nav>
+{% endif %}
+
+{% if view == "shape" %}
+<p>
+    Every track you played is a glowing stroke, placed by when you played
+    it and coloured from its album art, so a listening session reads as one
+    strand. Switch shapes to see the same plays in different ways.
+</p>
+
+<div class="shape-picker" id="shape-picker" role="group" aria-label="Shape"></div>
+<p class="hint" id="shape-description"></p>
+
+<form class="visual-controls" id="shape-controls">
+    <label for="shape-range">Show</label>
+    <select id="shape-range">
+        <option value="7">Last 7 days</option>
+        <option value="30">Last 30 days</option>
+        <option value="90">Last 90 days</option>
+        <option value="365">Last 12 months</option>
+        <option value="custom">Custom range…</option>
+    </select>
+    <span class="custom-range">
+        <input type="date" id="shape-start" required />
+        to
+        <input type="date" id="shape-end" required />
+        <button class="button secondary" type="submit">Show</button>
+    </span>
+</form>
+<p class="warning" id="shape-range-error" style="display: none"></p>
+
+<p class="visual-summary" id="shape-summary"></p>
+<div class="shape-wrap" id="shape-wrap">
+    <canvas id="shape-canvas" role="img" aria-label="Listening Shape"></canvas>
+    <canvas id="shape-overlay" class="overlay" aria-hidden="true"></canvas>
+    <div class="shape-tooltip" id="shape-tooltip"></div>
+</div>
+<p>
+    <button class="button secondary" type="button" id="shape-download">Download PNG</button>
+</p>
+
+<script src="{{ url_for('static', filename='listening_visuals.js') }}"></script>
+<script src="{{ url_for('static', filename='listening_shape.js') }}"></script>
+<script>
+    ListeningVisuals.init({{ visuals | tojson }});
+    ListeningVisuals.bindTabs();
+    ListeningShape.init({
+        fromTs: {{ shape.from_ts }},
+        toTs: {{ shape.to_ts }},
+        settings: {{ shape.settings | tojson }},
+        plays: {{ shape.plays | tojson }},
+        maxDays: {{ max_days }},
+    });
+</script>
+{% endif %}
+{% endif %}
+{% endblock %}

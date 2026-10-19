@@ -218,6 +218,31 @@ def load() -> dict:
     return {key: {"first": first, "last": last} for key, first, last in rows}
 
 
+def scrobbles_between(from_ts: int, to_ts: int) -> list[dict]:
+    """Every stored scrobble in [from_ts, to_ts), oldest first, as
+    [{"timestamp", "artist", "name", "album", "image_url"}, ...]. "album"
+    is "" and "image_url" None when the scrobble has no album; "image_url"
+    is also None when Last.fm has no art for the album. Reads what's
+    already stored - call sync() first for an up-to-date range."""
+    if not _PATH.exists():
+        return []
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            "SELECT s.timestamp, ar.name, t.name, al.name, al.image_url "
+            "FROM scrobbles s "
+            "JOIN tracks t ON t.id = s.track_id "
+            "JOIN artists ar ON ar.id = t.artist_id "
+            "LEFT JOIN albums al ON al.id = s.album_id "
+            "WHERE s.timestamp >= ? AND s.timestamp < ? "
+            "ORDER BY s.timestamp",
+            (from_ts, to_ts),
+        ).fetchall()
+    return [
+        {"timestamp": ts, "artist": artist, "name": name, "album": album or "", "image_url": image_url}
+        for ts, artist, name, album, image_url in rows
+    ]
+
+
 def lookup(data: dict, artist: str, name: str) -> dict:
     """Looks up a track's {"first", "last"} unix timestamps in an
     already-loaded index (see load()). Empty dict if never scrobbled or
