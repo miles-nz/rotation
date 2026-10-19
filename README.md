@@ -84,11 +84,21 @@ functions. Currently available:
   exposure (every day stacked onto one 24-hour ring, so the times you
   listen most glow brightest). Show the last 7, 30 or 90 days, the last 12
   months or a custom range of up to a year, hover a strand to see what it
-  was, and download the picture as a PNG. The shape and range you last used
-  are remembered in the browser. Album art comes from Last.fm, with a
-  Spotify search for albums Last.fm has no art for. Read-only. Requires
-  Last.fm to be configured (see Setup), and the first run downloads your
-  listening history (see Listening history below).
+  was, and download the picture as a PNG. Album art comes from Last.fm,
+  with a Spotify search for albums Last.fm has no art for.
+  The **artist river** is a streamgraph of your top 5-30 artists (15 by
+  default): each is a band whose thickness is your plays of them that
+  week, so obsessions swell and fade while long-term favourites flow
+  underneath. Each artist's band is coloured from the art of their
+  most-played album of all time, so it stays the same whatever range you
+  pick. Optionally include everyone else as a faint band along the
+  top, so the river's width is all your listening. Show the last 3, 6 or
+  12 months, all time or a custom range - ranges over two years are drawn
+  by month. Hover a band to see that artist's plays that week, and
+  download the river as a PNG. Each visualisation's settings are
+  remembered in the browser. Read-only. Requires Last.fm to be configured
+  (see Setup), and the first run downloads your listening history (see
+  Listening history below).
 - **Removal History** - every track Duplicate Finder or Playlist Cleanup
   removes (standalone or in a Cascade) is logged, keeping the last 20
   removals, so you can put tracks back later - all of them or just the

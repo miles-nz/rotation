@@ -243,6 +243,27 @@ def scrobbles_between(from_ts: int, to_ts: int) -> list[dict]:
     ]
 
 
+def album_plays() -> list[dict]:
+    """All-time plays of every (artist, album) pair stored, as
+    [{"artist", "album", "image_url", "plays"}, ...] - names exactly as
+    stored, so callers group spellings however they need. Scrobbles with no
+    album are left out."""
+    if not _PATH.exists():
+        return []
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            "SELECT ar.name, al.name, al.image_url, COUNT(*) "
+            "FROM scrobbles s "
+            "JOIN albums al ON al.id = s.album_id "
+            "JOIN artists ar ON ar.id = al.artist_id "
+            "GROUP BY al.id"
+        ).fetchall()
+    return [
+        {"artist": artist, "album": album, "image_url": image_url, "plays": plays}
+        for artist, album, image_url, plays in rows
+    ]
+
+
 def lookup(data: dict, artist: str, name: str) -> dict:
     """Looks up a track's {"first", "last"} unix timestamps in an
     already-loaded index (see load()). Empty dict if never scrobbled or

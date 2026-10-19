@@ -72,43 +72,8 @@ const ListeningShape = (() => {
         return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
     }
 
-    function hexToRgb(hex) {
-        const n = parseInt(hex.slice(1), 16);
-        return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-    }
-
     function luminance([r, g, b]) {
         return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
-    }
-
-    function rgbToHsl([r, g, b]) {
-        [r, g, b] = [r / 255, g / 255, b / 255];
-        const max = Math.max(r, g, b);
-        const min = Math.min(r, g, b);
-        const l = (max + min) / 2;
-        if (max === min) return [0, 0, l];
-        const d = max - min;
-        const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-        let h;
-        if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
-        else if (max === g) h = (b - r) / d + 2;
-        else h = (r - g) / d + 4;
-        return [h / 6, s, l];
-    }
-
-    function hslToRgb([h, s, l]) {
-        if (s === 0) return [l, l, l].map((c) => Math.round(c * 255));
-        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-        const p = 2 * l - q;
-        const channel = (t) => {
-            if (t < 0) t += 1;
-            if (t > 1) t -= 1;
-            if (t < 1 / 6) return p + (q - p) * 6 * t;
-            if (t < 1 / 2) return q;
-            if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
-            return p;
-        };
-        return [channel(h + 1 / 3), channel(h), channel(h - 1 / 3)].map((c) => Math.round(c * 255));
     }
 
     // Album art's dominant colours are often muted, so coloured ones get a
@@ -118,10 +83,10 @@ const ListeningShape = (() => {
     function visibleColour(hex) {
         if (!hex) return theme.neutral;
         if (adjustedColours.has(hex)) return adjustedColours.get(hex);
-        let [h, s, l] = rgbToHsl(hexToRgb(hex));
+        let [h, s, l] = ListeningVisuals.rgbToHsl(ListeningVisuals.hexToRgb(hex));
         if (s >= 0.12) s = Math.min(1, s * 1.4 + 0.08);
         l = theme.dark ? Math.min(Math.max(l, 0.38), 0.78) : Math.min(Math.max(l, 0.28), 0.62);
-        const [r, g, b] = hslToRgb([h, s, l]);
+        const [r, g, b] = ListeningVisuals.hslToRgb([h, s, l]);
         const result = `rgb(${r}, ${g}, ${b})`;
         adjustedColours.set(hex, result);
         return result;

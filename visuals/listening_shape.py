@@ -5,7 +5,6 @@ import logging
 from spotipy import Spotify
 
 from core.cancellation import CancelCheck
-import lastfm.most_played as most_played
 import lastfm.resolve_cache as resolve_cache
 import lastfm.scrobble_history as scrobble_history
 import visuals.album_colours as album_colours
@@ -31,7 +30,7 @@ def build(sp: Spotify | None, from_ts: int, to_ts: int, cancel_check: CancelChec
     where "c" is "#rrggbb" or None for no art."""
     scrobble_history.sync(cancel_check)
     scrobbles = scrobble_history.scrobbles_between(from_ts, to_ts)
-    art = _art_by_album(sp, scrobbles, cancel_check)
+    art = album_colours.art_by_album(sp, scrobbles, cancel_check)
     colours = album_colours.colours_for({url for url in art.values() if url}, cancel_check)
 
     plays = []
@@ -42,36 +41,3 @@ def build(sp: Spotify | None, from_ts: int, to_ts: int, cancel_check: CancelChec
     logger.info("listening shape: %d play(s), %d without album art", len(plays), no_art_count)
     return {"plays": plays, "no_art_count": no_art_count}
 
-
-def _art_by_album(sp: Spotify | None, scrobbles: list[dict], cancel_check: CancelCheck | None) -> dict[str, str | None]:
-    """album_key -> art URL for every album in scrobbles: the stored Last.fm
-    image, else the Spotify match's image, else None."""
-    art: dict[str, str | None] = {}
-    without_art: dict[str, dict] = {}
-    for s in scrobbles:
-        if not s["album"]:
-            continue
-        key = resolve_cache.album_key(s["artist"], s["album"])
-        if key in art:
-            continue
-        art[key] = s["image_url"]
-        if not s["image_url"]:
-            without_art[key] = {"artist": s["artist"], "name": s["album"]}
-
-    if without_art and sp is not None:
-        cache = resolve_cache.load("album")
-        try:
-            resolved_pairs = most_played._resolve_generic(
-                sp,
-                list(without_art.values()),
-                cache,
-                key_fn=lambda item: resolve_cache.album_key(item["artist"], item["name"]),
-                search_fn=most_played._search_album,
-                cancel_check=cancel_check,
-            )
-        finally:
-            resolve_cache.save("album", cache)
-        for item, resolved in resolved_pairs:
-            if resolved.get("found"):
-                art[resolve_cache.album_key(item["artist"], item["name"])] = resolved.get("image_url")
-    return art

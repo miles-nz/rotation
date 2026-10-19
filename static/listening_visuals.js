@@ -4,7 +4,6 @@
 // take (the server runs in UTC, so local days are only known here).
 const ListeningVisuals = (() => {
     const STORAGE_KEY = "listeningVisuals";
-    const DEFAULT_SETTINGS = { range: "30" };
     let visuals = [];
 
     function load() {
@@ -49,20 +48,30 @@ const ListeningVisuals = (() => {
         return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
     }
 
-    // {range: "7" | "30" | "90" | "custom", start, end} -> the local days it
-    // covers (presets end today; custom dates are inclusive) as
-    // {fromTs, toTs} in unix seconds, toTs exclusive.
+    // {range, start, end} -> the local days it covers as {fromTs, toTs} in
+    // unix seconds (toTs exclusive), plus the first and last day. range is
+    // a number of days ("30"), months ("12m") or "all" - each ending today
+    // - or "custom" for the inclusive start and end dates. "all" starts at
+    // 0 and has no start date; the server only returns what exists.
     function rangeBounds(settings) {
+        const today = startOfDay(new Date());
         let start = null;
         let end = null;
         if (settings.range === "custom") {
             start = parseDate(settings.start);
             end = parseDate(settings.end);
         }
+        if (settings.range === "all") {
+            return { fromTs: 0, toTs: Math.floor(addDays(today, 1).getTime() / 1000), start: "", end: formatDate(today) };
+        }
         if (!start || !end) {
-            const days = parseInt(settings.range, 10) || 30;
-            end = startOfDay(new Date());
-            start = addDays(end, -(days - 1));
+            end = today;
+            const months = /^(\d+)m$/.exec(settings.range || "");
+            if (months) {
+                start = new Date(end.getFullYear(), end.getMonth() - Number(months[1]), end.getDate() + 1);
+            } else {
+                start = addDays(end, -((parseInt(settings.range, 10) || 30) - 1));
+            }
         }
         return {
             fromTs: Math.floor(start.getTime() / 1000),
@@ -90,7 +99,8 @@ const ListeningVisuals = (() => {
     }
 
     function savedSettings(viewKey) {
-        return load()[viewKey] || DEFAULT_SETTINGS;
+        const visual = visuals.find((v) => v.key === viewKey);
+        return load()[viewKey] || { range: visual ? visual.default_range : "30" };
     }
 
     // The bare /listening-visuals page: go straight to the last-used
@@ -111,9 +121,60 @@ const ListeningVisuals = (() => {
         });
     }
 
+    // Colour conversions shared by the visualisations' album colours.
+    function hexToRgb(hex) {
+        const n = parseInt(hex.slice(1), 16);
+        return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    }
+
+    function rgbToHsl([r, g, b]) {
+        [r, g, b] = [r / 255, g / 255, b / 255];
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        const l = (max + min) / 2;
+        if (max === min) return [0, 0, l];
+        const d = max - min;
+        const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        let h;
+        if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+        else if (max === g) h = (b - r) / d + 2;
+        else h = (r - g) / d + 4;
+        return [h / 6, s, l];
+    }
+
+    function hslToRgb([h, s, l]) {
+        if (s === 0) return [l, l, l].map((c) => Math.round(c * 255));
+        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+        const p = 2 * l - q;
+        const channel = (t) => {
+            if (t < 0) t += 1;
+            if (t > 1) t -= 1;
+            if (t < 1 / 6) return p + (q - p) * 6 * t;
+            if (t < 1 / 2) return q;
+            if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+            return p;
+        };
+        return [channel(h + 1 / 3), channel(h), channel(h - 1 / 3)].map((c) => Math.round(c * 255));
+    }
+
     function init(visualList) {
         visuals = visualList;
     }
 
-    return { init, open, openSaved, bindTabs, remember, savedSettings, rangeBounds, parseDate, addDays, startOfDay, formatDate };
+    return {
+        init,
+        open,
+        openSaved,
+        bindTabs,
+        remember,
+        savedSettings,
+        rangeBounds,
+        parseDate,
+        addDays,
+        startOfDay,
+        formatDate,
+        hexToRgb,
+        rgbToHsl,
+        hslToRgb,
+    };
 })();

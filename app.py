@@ -26,6 +26,7 @@ import playlists.removal_history as removal_history_module
 import lastfm.forgotten_favourites as forgotten_favourites_module
 import lastfm.lastfm_client as lastfm_client_module
 import lastfm.most_played as most_played_module
+import visuals.artist_river as artist_river_module
 import visuals.listening_shape as listening_shape_module
 
 load_dotenv()
@@ -145,6 +146,7 @@ _visuals_job = BackgroundJob(
         "lastfm.scrobble_history",
         "lastfm.most_played",
         "visuals.album_colours",
+        "visuals.artist_river",
         "visuals.listening_shape",
         "app",
     ]
@@ -318,6 +320,15 @@ def _run_listening_shape(from_ts: int, to_ts: int, settings: dict):
         sp = get_authenticated_client()
         result = listening_shape_module.build(sp, from_ts, to_ts, cancel_check=cancel_check)
         return {"view": "shape", "from_ts": from_ts, "to_ts": to_ts, "settings": settings, **result}
+
+    return target
+
+
+def _run_artist_river(from_ts: int, to_ts: int, settings: dict):
+    def target(cancel_check):
+        sp = get_authenticated_client()
+        result = artist_river_module.build(sp, from_ts, to_ts, cancel_check=cancel_check)
+        return {"view": "river", "from_ts": from_ts, "to_ts": to_ts, "settings": settings, **result}
 
     return target
 
@@ -1777,13 +1788,29 @@ def forgotten_favourites_apply():
 # timestamps. Manual only, not a Cascade step.
 
 LISTENING_VISUALS = [
-    {"key": "shape", "label": "Listening Shape", "prepare_endpoint": "listening_shape_prepare"},
+    {
+        "key": "shape",
+        "label": "Listening Shape",
+        "prepare_endpoint": "listening_shape_prepare",
+        "default_range": "30",
+    },
+    {
+        "key": "river",
+        "label": "Artist river",
+        "prepare_endpoint": "artist_river_prepare",
+        "default_range": "12m",
+    },
 ]
 
 
 def _listening_visuals_template(**context):
     visuals = [
-        {"key": v["key"], "label": v["label"], "prepare_url": url_for(v["prepare_endpoint"])}
+        {
+            "key": v["key"],
+            "label": v["label"],
+            "prepare_url": url_for(v["prepare_endpoint"]),
+            "default_range": v["default_range"],
+        }
         for v in LISTENING_VISUALS
     ]
     return render_template("listening_visuals.html", visuals=visuals, **context)
@@ -1803,6 +1830,16 @@ def listening_visuals():
     )
 
 
+def _visual_settings(default_range: str) -> dict:
+    """The range a prepare route was asked for, as the browser described
+    it - handed back to the page so its controls show what's displayed."""
+    return {
+        "range": request.args.get("range", default_range),
+        "start": request.args.get("start", ""),
+        "end": request.args.get("end", ""),
+    }
+
+
 @app.route("/listening-visuals/shape/prepare")
 def listening_shape_prepare():
     if not _credentials_configured() or not _lastfm_configured():
@@ -1819,13 +1856,7 @@ def listening_shape_prepare():
     max_span = (listening_shape_module.MAX_DAYS + 1) * 24 * 60 * 60
     if from_ts is None or to_ts is None or not 0 < to_ts - from_ts <= max_span:
         return redirect(url_for("listening_visuals"))
-    settings = {
-        "range": request.args.get("range", "30"),
-        "start": request.args.get("start", ""),
-        "end": request.args.get("end", ""),
-    }
-
-    _visuals_job.start(_run_listening_shape(from_ts, to_ts, settings))
+    _visuals_job.start(_run_listening_shape(from_ts, to_ts, _visual_settings("30")))
 
     return render_template(
         "progress.html",
@@ -1835,6 +1866,50 @@ def listening_shape_prepare():
         back_url=url_for("home"),
         heading="Drawing your listening shape…",
         description="Updating your Last.fm listening history, then working out the colour of each album's art. The first time, this downloads your full listening history, which takes about 20 minutes - after that it only fetches what's new.",
+    )
+
+
+@app.route("/listening-visuals/river/prepare")
+def artist_river_prepare():
+    if not _credentials_configured() or not _lastfm_configured():
+        return redirect(url_for("listening_visuals"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    # No maximum span - the river can show all time (from_ts 0), which is
+    # bucketed by month in the browser past two years.
+    from_ts = request.args.get("from_ts", type=int)
+    to_ts = request.args.get("to_ts", type=int)
+    if from_ts is None or to_ts is None or from_ts < 0 or to_ts <= from_ts:
+        return redirect(url_for("listening_visuals"))
+
+    _visuals_job.start(_run_artist_river(from_ts, to_ts, _visual_settings("12m")))
+
+    return render_template(
+        "progress.html",
+        status_url=url_for("listening_visuals_status"),
+        cancel_url=url_for("listening_visuals_cancel"),
+        result_url=url_for("artist_river"),
+        back_url=url_for("home"),
+        heading="Drawing your artist river…",
+        description="Updating your Last.fm listening history. The first time, this downloads your full listening history, which takes about 20 minutes - after that it only fetches what's new.",
+    )
+
+
+@app.route("/listening-visuals/river")
+def artist_river():
+    result = _visuals_job.result
+    if not _credentials_configured() or result is None or result.get("view") != "river":
+        return redirect(url_for("listening_visuals"))
+
+    return _listening_visuals_template(
+        needs_credentials=False,
+        needs_lastfm=False,
+        logged_in=True,
+        view="river",
+        river=result,
     )
 
 
