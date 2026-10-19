@@ -57,7 +57,9 @@ endblock %} {% block content %}
     </div>
 
     <p style="margin-top: 1.5rem">
-        <button class="button" type="submit">Remove selected</button>
+        <button class="button" type="submit" id="apply-submit">
+            Remove selected
+        </button>
         <a
             class="button secondary"
             href="{{ cancel_url or url_for('playlist_cleanup_picker') }}"
@@ -65,4 +67,18 @@ endblock %} {% block content %}
         >
     </p>
 </form>
+<script>
+    (function () {
+        const submitButton = document.getElementById("apply-submit");
+        const checkboxes = document.querySelectorAll('input[name="track"]');
+        function updateLabel() {
+            const anyChecked = Array.from(checkboxes).some((c) => c.checked);
+            submitButton.textContent = anyChecked
+                ? "Remove selected"
+                : "Continue without removing";
+        }
+        checkboxes.forEach((c) => c.addEventListener("change", updateLabel));
+        updateLabel();
+    })();
+</script>
 {% endif %} {% endblock %}

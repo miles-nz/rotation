@@ -11,12 +11,13 @@
     <li>
         <strong>{{ s.label }}</strong>:
         {% if s.type == 'duplicates' %} removed {{ s.removed }} track{{ 's' if
-        s.removed != 1 else '' }} {% elif s.type == 'playlist_filter' %} added
-        {{ s.added }} track{{ 's' if s.added != 1 else '' }} to "{{
+        s.removed != 1 else '' }} {% elif s.type == 'playlist_filter' %} {% if not s.added
+        and not s.skipped and not s.local_skipped %} nothing added {% else %}
+        added {{ s.added }} track{{ 's' if s.added != 1 else '' }} to "{{
         s.playlist_name }}"{% if s.skipped %} ({{ s.skipped }} already
         there){% endif %}{% if s.local_skipped %} ({{ s.local_skipped }} local
         file{{ 's' if s.local_skipped != 1 else '' }} skipped - Spotify's API
-        doesn't support adding local files to a playlist){% endif %} {% elif
+        doesn't support adding local files to a playlist){% endif %}{% endif %} {% elif
         s.type == 'playlist_cleanup' %} removed {{ s.removed }} track{{ 's' if
         s.removed != 1 else '' }} from "{{ s.playlist_name }}" {% elif s.type
         == 'playlist_diff' %} {% if s.added_summary %} added tracks to: {% for

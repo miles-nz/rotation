@@ -858,16 +858,25 @@ def playlist_filter_apply():
     match_uris = {m["uri"] for m in result["matches"]}
     selected_uris = [uri for uri in request.form.getlist("track") if uri in match_uris]
 
-    if result["destination_mode"] == "new":
-        playlist_id = playlist_filter_module.create_playlist(sp, result["destination_name"])
-        playlist_name = result["destination_name"]
+    if not selected_uris:
+        # "Continue without adding" - don't create an empty new playlist.
+        added, skipped, local_skipped = 0, 0, 0
+        playlist_name = (
+            result["destination_name"]
+            if result["destination_mode"] == "new"
+            else result["destination_playlist_name"]
+        )
     else:
-        playlist_id = result["destination_playlist_id"]
-        playlist_name = result["destination_playlist_name"]
+        if result["destination_mode"] == "new":
+            playlist_id = playlist_filter_module.create_playlist(sp, result["destination_name"])
+            playlist_name = result["destination_name"]
+        else:
+            playlist_id = result["destination_playlist_id"]
+            playlist_name = result["destination_playlist_name"]
 
-    added, skipped, local_skipped = playlist_filter_module.add_tracks_to_playlist(
-        sp, playlist_id, selected_uris
-    )
+        added, skipped, local_skipped = playlist_filter_module.add_tracks_to_playlist(
+            sp, playlist_id, selected_uris
+        )
     _filter_job.result = None
 
     return render_template(

@@ -18,8 +18,8 @@ functions. Currently available:
   conditions (added date, release year, popularity, duration, explicit,
   artist name, track name, or genre), and add every matching track to
   another playlist - an existing one or a brand new one.
-  Flags tracks already in the destination, plus any that look like a
-  different version (remaster, live, single edit, etc.) of a track already
+  Flags tracks already in the destination, and unchecks any that look like
+  a different version (remaster, live, single edit, etc.) of a track already
   there.
 - **Playlist Cleanup** - pick a playlist and a rule for what to keep (added
   date, release year, popularity, duration, explicit, artist name, track

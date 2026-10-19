@@ -44,8 +44,21 @@
     </ol>
 
     <p style="margin-top: 1.5rem">
-        <button class="button" type="submit">Add to top of "{{ destination_name }}"</button>
+        <button class="button" type="submit" id="apply-submit">Add to top of "{{ destination_name }}"</button>
         <a class="button secondary" href="{{ url_for('playlist_prepend_picker') }}">Cancel</a>
     </p>
 </form>
+<script>
+    (function () {
+        const submitButton = document.getElementById("apply-submit");
+        const addLabel = submitButton.textContent;
+        const checkboxes = document.querySelectorAll('input[name="track"]');
+        function updateLabel() {
+            const anyChecked = Array.from(checkboxes).some((c) => c.checked);
+            submitButton.textContent = anyChecked ? addLabel : "Continue without adding";
+        }
+        checkboxes.forEach((c) => c.addEventListener("change", updateLabel));
+        updateLabel();
+    })();
+</script>
 {% endif %} {% endblock %}

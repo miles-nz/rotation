@@ -1,7 +1,6 @@
 {% extends "base.html" %} {% block title %}Matches - Rotation{% endblock %} {%
-block extra_style %} .version-warning { display: none; color: var(--warning);
+block extra_style %} .version-warning { display: block; color: var(--warning);
 font-size: 0.85rem; flex-basis: 100%; margin-left: 1.6rem; }
-#matches-list.show-version-warnings .version-warning { display: block; }
 #version-check-summary { color: var(--warning); } {% endblock %} {% block
 content %}
 <h1>Matches</h1>
@@ -41,13 +40,14 @@ content %}
     you don't want to add.
 </p>
 
-{% if destination_mode == 'existing' %}
-<p>
-    <button class="button secondary" id="check-versions-btn" type="button">
-        Check for similar versions already in "{{ destination_label }}"
-    </button>
+{% if similar_versions %}
+<p id="version-check-summary">
+    {{ similar_versions|length }} track{{ 's' if similar_versions|length != 1
+    else '' }} may already exist in "{{ destination_label }}" as a different
+    version and {{ 'have' if similar_versions|length != 1 else 'has' }} been
+    unchecked - tick {{ 'any' if similar_versions|length != 1 else 'it' }} you
+    want to add anyway.
 </p>
-<p id="version-check-summary" style="display: none"></p>
 {% endif %}
 
 <form
@@ -61,7 +61,7 @@ content %}
                 type="checkbox"
                 name="track"
                 value="{{ track.uri }}"
-                checked
+                {% if track.uri not in similar_versions %}checked{% endif %}
             />
             <span>{{ track.artists }} – {{ track.name }}</span>
             {% if track.duration_ms is not none %}
@@ -81,7 +81,9 @@ content %}
     </div>
 
     <p style="margin-top: 1.5rem">
-        <button class="button" type="submit">Add to playlist</button>
+        <button class="button" type="submit" id="apply-submit">
+            Add to playlist
+        </button>
         <a
             class="button secondary"
             href="{{ cancel_url or url_for('playlist_filter_picker') }}"
@@ -89,24 +91,19 @@ content %}
         >
     </p>
 </form>
-
-{% if destination_mode == 'existing' %}
 <script>
-    document
-        .getElementById("check-versions-btn")
-        .addEventListener("click", () => {
-            const list = document.getElementById("matches-list");
-            list.classList.add("show-version-warnings");
-            const count = list.querySelectorAll(".version-warning").length;
-            const summary = document.getElementById("version-check-summary");
-            summary.style.display = "block";
-            summary.textContent =
-                count === 0
-                    ? 'No similar versions found already in "{{ destination_label }}".'
-                    : count +
-                      " track" +
-                      (count !== 1 ? "s" : "") +
-                      " may already exist as a different version - check the warnings below before adding.";
-        });
+    (function () {
+        const submitButton = document.getElementById("apply-submit");
+        const checkboxes = document.querySelectorAll('input[name="track"]');
+        function updateLabel() {
+            const anyChecked = Array.from(checkboxes).some((c) => c.checked);
+            submitButton.textContent = anyChecked
+                ? "Add to playlist"
+                : "Continue without adding";
+        }
+        checkboxes.forEach((c) => c.addEventListener("change", updateLabel));
+        updateLabel();
+    })();
 </script>
-{% endif %} {% endif %} {% endblock %}
+
+{% endif %} {% endblock %}

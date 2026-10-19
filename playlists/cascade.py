@@ -157,6 +157,19 @@ def apply_step(sp: Spotify, cache: PlaylistCache, step: dict, result: Any, form)
         match_uris = {m["uri"] for m in result["matches"]}
         selected_uris = [uri for uri in form.getlist("track") if uri in match_uris]
 
+        if not selected_uris:
+            # "Continue without adding" - don't create an empty new playlist.
+            return {
+                "type": step_type,
+                "label": label,
+                "added": 0,
+                "skipped": 0,
+                "local_skipped": 0,
+                "playlist_name": result["destination_name"]
+                if result["destination_mode"] == "new"
+                else result["destination_playlist_name"],
+            }
+
         if result["destination_mode"] == "new":
             playlist_id = playlist_filter_module.create_playlist(sp, result["destination_name"])
             playlist_name = result["destination_name"]
