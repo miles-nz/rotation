@@ -260,7 +260,7 @@ def _result_item_uris(step: dict, result) -> list[str]:
     not just the same items turning up again (see _run_signature)."""
     step_type = step["type"]
     if step_type == "duplicates":
-        return [d["uri"] for d in result]
+        return [r["uri"] for d in result for r in d["releases"]]
     if step_type == "playlist_filter":
         return [m["uri"] for m in result["matches"]]
     if step_type == "playlist_cleanup":

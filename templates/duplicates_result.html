@@ -5,8 +5,10 @@ font-weight: bold; margin-bottom: 0.5rem; } .dup-embed {
 border-radius: 12px; overflow: hidden; height: 80px; margin-bottom: 0.5rem;
 background: var(--bg); } .dup-embed iframe { display: block; border: none; } .occurrence { display: flex; align-items: center; gap:
 0.5rem; padding: 0.5rem 0; cursor: pointer; } .occurrence .playlist-name { flex:
-1; } .occurrence .added-date { color: var(--muted); font-size: 0.85rem; } {%
-endblock %} {% block content %}
+1; } .occurrence .added-date { color: var(--muted); font-size: 0.85rem; }
+.release + .release { margin-top: 0.5rem; padding-top: 0.75rem; border-top:
+1px solid var(--border); } .release-title { color:
+var(--muted); font-size: 0.9rem; margin-bottom: 0.4rem; } {% endblock %} {% block content %}
 <h1>Duplicates</h1>
 
 {% if cascade_step %}
@@ -22,32 +24,62 @@ endblock %} {% block content %}
 <p class="hint">No duplicates found across the selected playlists.</p>
 <p><a class="button" href="{{ url_for('duplicates_picker') }}">Back</a></p>
 {% endif %} {% else %}
+{% set exact = duplicates|selectattr("kind", "equalto", "exact")|list %} {%
+set releases = duplicates|selectattr("kind", "equalto", "release")|list %} {%
+macro occurrence_rows(release) %} {% for occ in release.occurrences %}
+<label class="occurrence">
+    <input
+        type="checkbox"
+        name="remove"
+        value="{{ occ.playlist_id }}::{{ release.uri }}"
+    />
+    <span class="playlist-name">{{ occ.playlist_name }}</span>
+    <span class="added-date"
+        >added {{ occ.added_at[:10] if occ.added_at else 'unknown date' }}</span
+    >
+</label>
+{% endfor %} {% endmacro %}
 <p>
-    Found {{ duplicates|length }} track{{ 's' if duplicates|length != 1 else ''
-    }} that {{ 'appear' if duplicates|length != 1 else 'appears' }} in more than
-    one playlist. Check the playlists you want to remove each from.
+    {% if exact %}Found {{ exact|length }} track{{ 's' if exact|length != 1
+    else '' }} that {{ 'appear' if exact|length != 1 else 'appears' }} in more
+    than one playlist{% endif %}{% if exact and releases %}, and {% elif
+    releases %}Found {% endif %}{% if releases %}{{ releases|length }}
+    song{{ 's' if releases|length != 1 else '' }} on more than one
+    release{% endif %}. Check the playlists you want to remove each from.
 </p>
 <form method="post" action="{{ form_action or url_for('duplicates_remove') }}">
-    {% for dup in duplicates %}
+    {% for dup in exact %} {% set release = dup.releases[0] %}
     <div class="dup-group">
         <div class="dup-title">{{ dup.artists }} – {{ dup.name }}</div>
-        <div class="dup-embed" data-spotify-embed data-uri="{{ dup.uri }}"></div>
-        {% for occ in dup.occurrences %}
-        <label class="occurrence">
-            <input
-                type="checkbox"
-                name="remove"
-                value="{{ occ.playlist_id }}::{{ dup.uri }}"
-            />
-            <span class="playlist-name">{{ occ.playlist_name }}</span>
-            <span class="added-date"
-                >added {{ occ.added_at[:10] if occ.added_at else 'unknown date'
-                }}</span
-            >
-        </label>
+        <div class="dup-embed" data-spotify-embed data-uri="{{ release.uri }}"></div>
+        {{ occurrence_rows(release) }}
+    </div>
+    {% endfor %} {% if releases %}
+    <h2>Same song, different release</h2>
+    <p class="hint">
+        The same artists and title, with lengths within a couple of seconds,
+        but from different albums or singles.
+    </p>
+    {% for dup in releases %}
+    <div class="dup-group">
+        <div class="dup-title">{{ dup.artists }} – {{ dup.name }}</div>
+        {% for release in dup.releases %}
+        <div class="release">
+            <div class="release-title">
+                {% if release.name != dup.name %}{{ release.name }} · {% endif
+                %}{{ release.album or 'Unknown album' }} · {{
+                release.duration_ms|duration }}
+            </div>
+            <div
+                class="dup-embed"
+                data-spotify-embed
+                data-uri="{{ release.uri }}"
+            ></div>
+            {{ occurrence_rows(release) }}
+        </div>
         {% endfor %}
     </div>
-    {% endfor %}
+    {% endfor %} {% endif %}
     <p style="margin-top: 1.5rem">
         <button class="button" type="submit" id="apply-submit">
             Remove selected

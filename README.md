@@ -9,7 +9,10 @@ functions. Currently available:
   playlist.
 - **Duplicate Finder** - pick two or more playlists and find tracks that
   appear in more than one of them, with the date each copy was added, so
-  you can select which playlist(s) to remove each duplicate from.
+  you can select which playlist(s) to remove each duplicate from. It also
+  catches the same song on different releases (e.g. the single and the
+  album cut): same artists, same title once version suffixes like
+  "- Remastered 2011" are stripped, and lengths within 2 seconds.
 - **Track Search** - search Spotify's catalog and preview any track with
   the embedded player.
 - **All Playlists** - lists every playlist in your library; click a name or
