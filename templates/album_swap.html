@@ -276,7 +276,10 @@
                 "{{ url_for('api_playlists') }}",
                 "{{ url_for('login') }}",
             );
-            playlistRowManager.reset([null]);
+            const defaults = {{ default_prefs | tojson }};
+            playlistRowManager.reset(
+                Array.isArray(defaults) && defaults.length ? defaults : [null],
+            );
             playlistsLoaded = true;
         } catch (e) {
             document.getElementById("picker-error").textContent =

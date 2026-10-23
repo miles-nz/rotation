@@ -64,6 +64,7 @@ DEFAULT_PREFERENCES = {
     "playlist_diff": _parse_json_env("DEFAULT_PLAYLIST_DIFF"),
     "playlist_prepend": _parse_json_env("DEFAULT_PLAYLIST_PREPEND"),
     "playlist_search": _parse_json_env("DEFAULT_PLAYLIST_SEARCH"),
+    "album_swap": _parse_json_env("DEFAULT_ALBUM_SWAP"),
     "cascade": _parse_json_env("DEFAULT_CASCADE"),
 }
 
@@ -1367,6 +1368,7 @@ def album_swap_picker():
         needs_credentials=False,
         needs_lastfm=not _lastfm_configured(),
         logged_in=sp is not None,
+        default_prefs=_default_preferences("album_swap", sp),
     )
 
 
