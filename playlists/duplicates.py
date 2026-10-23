@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from spotipy import Spotify
 
 from core.cancellation import CancelCheck
 import playlists.playlist_cache as playlist_cache_module
-import playlists.playlist_filter as playlist_filter_module
 import playlists.removal_history as removal_history_module
 
 REMOVE_BATCH_SIZE = 100
@@ -14,27 +14,129 @@ REMOVE_BATCH_SIZE = 100
 # song - reissues and remasters often drift by a second or so.
 RELEASE_DURATION_TOLERANCE_MS = 2000
 
+# Title suffixes that only label a release of the same recording, so they're
+# stripped before matching. This is deliberately an allowlist: any other
+# suffix ("- Live", "- Radio Edit", "- Mono", "- 2019 Mix", "(So Far Away)")
+# stays part of the title, so an unfamiliar one reads as a different song -
+# the safe mistake for a tool that removes tracks. The length tolerance
+# still applies on top, which is what keeps e.g. an "Original Mix" that's
+# really an extended cut apart from the radio-length track.
+_SAME_RECORDING_SUFFIX_RE = re.compile(
+    r"""(
+        ((19|20)\d\d\s+(-\s+)?)?remaster(ed)?(\s+version)?(\s+(19|20)\d\d)?
+        | original\s+mix
+        | prod(\.|uced)?\s+(by\s+)?.+
+        | bonus(\s+track)?
+        | (theme\s+)?from\s+(the\s+motion\s+picture\s+)?["“].+
+        | from\s+.+\s+(soundtrack|the\s+album|score)
+        | .+\s+soundtrack(\s+version)?
+    )""",
+    re.VERBOSE,
+)
+# A featured-artist credit, wherever it sits in the title ("Show Me Love
+# (feat. X) - Skrillex Remix") - often on one release but not another, and
+# the artists field already says who's on the track.
+_CREDIT_RE = re.compile(r"\s*[\(\[](feat\.?|ft\.?|featuring|with)\s[^\)\]]*[\)\]]")
+_BRACKETED_SUFFIX_RE = re.compile(r"\s*[\(\[]([^\)\]]*)[\)\]]$")
+_DASH_RE = re.compile(r"\s+-\s+")
+_LAST_DASH_SUFFIX_RE = re.compile(r"\s+-\s+((?:(?!\s-\s).)+)$")
+_TRAILING_PAREN_RE = re.compile(r"\s*\(([^()]*)\)$")
+# Words that mark bracketed text as naming a version rather than being part
+# of the song's name - see _album_title.
+_VERSION_WORD_RE = re.compile(
+    r"""\b(
+        live | acoustic | accoustic | unplugged | stripped | remix(ed)? | mix | edit
+        | version | instrumental | demo | mono | stereo | reprise | interlude | intro
+        | outro | vip | flip | extended | radio | single | re-?record(ed|ings?)
+        | session | take | karaoke | a\s?cappella | acapella | dub | rework | bootleg
+        | (19|20)\d\d
+    )\b""",
+    re.VERBOSE,
+)
+
 logger = logging.getLogger(__name__)
+
+
+def _strip_same_recording_suffix(title: str) -> str | None:
+    """title with one trailing same-recording suffix removed, or None if it
+    doesn't end in one. A dash suffix is matched from the earliest " - " whose
+    remainder is a whole suffix, so "- 2015 - Remaster" goes in one step."""
+    bracketed = _BRACKETED_SUFFIX_RE.search(title)
+    if bracketed and _SAME_RECORDING_SUFFIX_RE.fullmatch(bracketed.group(1).strip()):
+        return title[: bracketed.start()]
+    for dash in _DASH_RE.finditer(title):
+        if _SAME_RECORDING_SUFFIX_RE.fullmatch(title[dash.end() :].strip()):
+            return title[: dash.start()]
+    return None
+
+
+def _release_title(name: str) -> str:
+    """The title used to match the same song across releases: lowercased,
+    curly apostrophes straightened, featured-artist credits dropped, and
+    same-recording suffixes (see _SAME_RECORDING_SUFFIX_RE) stripped -
+    repeatedly, since a title can carry several ("Song - Bonus Track - 2009
+    Remaster")."""
+    title = name.strip().lower().replace("’", "'").replace("[", "(").replace("]", ")")
+    title = _CREDIT_RE.sub("", title)
+    while (stripped := _strip_same_recording_suffix(title)) is not None:
+        title = stripped.strip()
+    # Releases write the same label both ways ("- Club Mix" / "(Club Mix)"),
+    # so any dash suffix left is rewritten in bracket form to compare equal.
+    while dash := _LAST_DASH_SUFFIX_RE.search(title):
+        title = f"{title[: dash.start()]} ({dash.group(1)})"
+    return _CREDIT_RE.sub("", title).strip()
+
+
+def _album_title(release_title: str) -> str:
+    """release_title with any trailing bracketed text dropped unless it names
+    a version (see _VERSION_WORD_RE) - so "the kill (bury me)" gives "the
+    kill" but "miss understood (instrumental)" is left alone. Only used to
+    compare tracks on the same album, where the same track is sometimes
+    titled two ways; across albums "(So Far Away)" style text still counts."""
+    title = release_title
+    while (paren := _TRAILING_PAREN_RE.search(title)) and not _VERSION_WORD_RE.search(paren.group(1)):
+        title = title[: paren.start()].strip()
+    return title
 
 
 def _release_clusters(tracks: list[dict]) -> list[list[dict]]:
     """Groups tracks (distinct uris) that look like the same song on
-    different releases: same artists, same title once version suffixes are
-    stripped, and lengths within RELEASE_DURATION_TOLERANCE_MS of each
-    other. Local files and tracks with no length are left out - they only
-    ever match by exact uri. Returns only clusters of 2+ tracks."""
+    different releases: same artists, same _release_title (or, on the same
+    album, the same _album_title), and lengths within
+    RELEASE_DURATION_TOLERANCE_MS of each other. Local files and tracks with
+    no length are left out - they only ever match by exact uri. Returns only
+    clusters of 2+ tracks."""
     by_key: dict[tuple[str, str], list[dict]] = {}
     for track in tracks:
         if track.get("is_local") or track.get("duration_ms") is None:
             continue
-        key = (
-            track["artists"].strip().lower(),
-            playlist_filter_module._normalize_title(track["name"]),
-        )
+        key = (track["artists"].strip().lower(), _release_title(track["name"]))
         by_key.setdefault(key, []).append(track)
 
+    # Merge title keys that meet on one album (union-find over the keys), so
+    # their tracks go through the length check together.
+    parent = {key: key for key in by_key}
+
+    def root(key: tuple[str, str]) -> tuple[str, str]:
+        while parent[key] != key:
+            key = parent[key]
+        return key
+
+    first_key_by_album_title: dict[tuple[str, str, str], tuple[str, str]] = {}
+    for key, candidates in by_key.items():
+        for track in candidates:
+            album = (track.get("album") or "").strip().lower()
+            if not album:
+                continue
+            other = first_key_by_album_title.setdefault((key[0], album, _album_title(key[1])), key)
+            parent[root(key)] = root(other)
+
+    merged: dict[tuple[str, str], list[dict]] = {}
+    for key, candidates in by_key.items():
+        merged.setdefault(root(key), []).extend(candidates)
+
     clusters = []
-    for candidates in by_key.values():
+    for candidates in merged.values():
         # Anchoring each cluster on its shortest track (rather than chaining
         # neighbours) keeps every pair in it within the tolerance.
         cluster: list[dict] = []
