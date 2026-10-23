@@ -26,6 +26,8 @@ import playlists.playlist_diff as playlist_diff_module
 import playlists.playlist_prepend as playlist_prepend_module
 import playlists.playlist_search as playlist_search_module
 import playlists.playlist_swap as playlist_swap_module
+import playlists.ranking_check as ranking_check_module
+import playlists.ranking_dismissals as ranking_dismissals_module
 import playlists.removal_history as removal_history_module
 import lastfm.forgotten_favourites as forgotten_favourites_module
 import lastfm.lastfm_client as lastfm_client_module
@@ -70,6 +72,7 @@ DEFAULT_PREFERENCES = {
     "playlist_search": _parse_json_env("DEFAULT_PLAYLIST_SEARCH"),
     "album_swap": _parse_json_env("DEFAULT_ALBUM_SWAP"),
     "cascade": _parse_json_env("DEFAULT_CASCADE"),
+    "ranking_check": _parse_json_env("DEFAULT_RANKING_CHECK"),
 }
 
 
@@ -172,6 +175,14 @@ _forgotten_job = BackgroundJob(
         "lastfm.most_played",
         "lastfm.scrobble_history",
         "playlists.playlist_cache",
+        "app",
+    ]
+)
+_ranking_job = BackgroundJob(
+    [
+        "playlists.ranking_check",
+        "playlists.playlist_cache",
+        "lastfm.scrobble_history",
         "app",
     ]
 )
@@ -365,6 +376,24 @@ def _run_forgotten_favourites_scan(min_plays: int, months: int):
             sp, min_plays, months, cancel_check=cancel_check
         )
         return {"min_plays": min_plays, "months": months, **result}
+
+    return target
+
+
+def _run_ranking_check_scan(tier_ids: list[str], year_id: str, period: str, only_added: bool):
+    def target(cancel_check):
+        sp = get_authenticated_client()
+        result = ranking_check_module.find_inconsistencies(
+            sp,
+            [{"id": tier_id} for tier_id in tier_ids],
+            year_id,
+            period,
+            only_added,
+            ranking_dismissals_module.active(),
+            cancel_check=cancel_check,
+        )
+        ranking_dismissals_module.restore(result["stale_dismissals"])
+        return result
 
     return target
 
@@ -1883,6 +1912,176 @@ def forgotten_favourites_apply():
         local_skipped=local_skipped,
         playlist_name=playlist_name,
     )
+
+
+# --- Ranking Check -------------------------------------------------------
+# Finds songs whose ranking playlist (best to worst, e.g. "one" to "four")
+# doesn't match the yearly playlist's order or how much they're played.
+# A move between ranking playlists is a button per song, and the page comes
+# back to the results afterwards so several can be worked through in one
+# go; reordering the yearly playlist is left to the user. Manual only, not
+# a Cascade step.
+
+
+@app.route("/ranking-check")
+def ranking_check_picker():
+    if not _credentials_configured():
+        return render_template("ranking_check.html", needs_credentials=True)
+
+    sp = get_authenticated_client()
+    return render_template(
+        "ranking_check.html",
+        needs_credentials=False,
+        needs_lastfm=not _lastfm_configured(),
+        logged_in=sp is not None,
+        default_prefs=_default_preferences("ranking_check", sp),
+        periods=ranking_check_module.PERIODS,
+        default_period=ranking_check_module.DEFAULT_PERIOD,
+        dismissals=ranking_dismissals_module.list_active() if sp is not None else [],
+        dismiss_months=ranking_dismissals_module.DISMISS_MONTHS,
+    )
+
+
+@app.route("/ranking-check/scan")
+def ranking_check_scan():
+    if not _credentials_configured() or not _lastfm_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    tier_ids = request.args.getlist("tier_id")
+    year_id = request.args.get("year_id")
+    period = request.args.get("period", ranking_check_module.DEFAULT_PERIOD)
+    if len(tier_ids) < 2 or not all(tier_ids) or not year_id:
+        return redirect(url_for("ranking_check_picker"))
+
+    _ranking_job.start(
+        _run_ranking_check_scan(tier_ids, year_id, period, request.args.get("only_added") == "1")
+    )
+
+    return render_template(
+        "progress.html",
+        status_url=url_for("ranking_check_scan_status"),
+        cancel_url=url_for("ranking_check_scan_cancel"),
+        result_url=url_for("ranking_check_scan_result"),
+        back_url=url_for("ranking_check_picker"),
+        heading="Checking your rankings…",
+        description="Updating your Last.fm listening history, reading your ranking playlists and yearly playlist, then comparing them with each other and with how much you've played each song. The first run builds your full listening history index, which can take several minutes - after that it's cached and only tops up what's new.",
+    )
+
+
+@app.route("/ranking-check/scan/status")
+def ranking_check_scan_status():
+    return jsonify(_ranking_job.status())
+
+
+@app.route("/ranking-check/scan/cancel", methods=["POST"])
+def ranking_check_scan_cancel():
+    _ranking_job.cancel()
+    return jsonify({"ok": True})
+
+
+@app.route("/ranking-check/scan/result")
+def ranking_check_scan_result():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    result = _ranking_job.result
+    if result is None:
+        return redirect(url_for("ranking_check_picker"))
+
+    return render_template(
+        "ranking_check_result.html",
+        max_results=ranking_check_module.MAX_RESULTS,
+        unranked_days=ranking_check_module.UNRANKED_TAIL_DAYS,
+        demotion_min_days=ranking_check_module.DEMOTION_MIN_DAYS,
+        **result,
+    )
+
+
+def _ranking_check_entry(key: str | None):
+    """The result entry for key from the last scan, or None."""
+    result = _ranking_job.result
+    if result is None or not key:
+        return None
+    return next((r for r in result["results"] if r["key"] == key), None)
+
+
+def _ranking_check_back(entry: dict | None):
+    url = url_for("ranking_check_scan_result")
+    if entry is not None:
+        url += f"#song-{_ranking_job.result['results'].index(entry) + 1}"
+    return redirect(url)
+
+
+@app.route("/ranking-check/move", methods=["POST"])
+def ranking_check_move():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    entry = _ranking_check_entry(request.form.get("key"))
+    tier = request.form.get("tier", type=int)
+    move = next((m for m in entry["moves"] if m["tier"] == tier), None) if entry else None
+    if entry is None or entry["status"] is not None or move is None:
+        return _ranking_check_back(entry)
+
+    tiers = _ranking_job.result["tiers"]
+    history_id = ranking_check_module.move_song(sp, entry, tiers, tier)
+    verb = move["label"].split(" ", 1)[0]
+    done = {"Add": "Added to", "Keep": "Now only in", "Move": "Moved to"}[verb]
+    entry["status"] = {"kind": "moved", "text": f"{done} {tiers[tier]['name']}", "history_id": history_id}
+    return _ranking_check_back(entry)
+
+
+@app.route("/ranking-check/dismiss", methods=["POST"])
+def ranking_check_dismiss():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    entry = _ranking_check_entry(request.form.get("key"))
+    if entry is None or entry["status"] is not None:
+        return _ranking_check_back(entry)
+
+    until = ranking_dismissals_module.dismiss(entry)
+    entry["status"] = {"kind": "dismissed", "until": until}
+    return _ranking_check_back(entry)
+
+
+@app.route("/ranking-check/restore", methods=["POST"])
+def ranking_check_restore():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    key = request.form.get("key")
+    if key:
+        ranking_dismissals_module.restore([key])
+
+    # Undo from the results page goes back there; a restore from the
+    # dismissed list on the picker stays on the picker.
+    entry = _ranking_check_entry(key)
+    if request.form.get("from") == "result" and entry is not None:
+        if entry["status"] and entry["status"]["kind"] == "dismissed":
+            entry["status"] = None
+        return _ranking_check_back(entry)
+    return redirect(url_for("ranking_check_picker"))
 
 
 # --- Listening Visuals ----------------------------------------------------

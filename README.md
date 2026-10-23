@@ -78,6 +78,28 @@ functions. Currently available:
   listed separately. The first run downloads your full Last.fm listening
   history (see Listening history below), which takes about 20 minutes.
   Requires Last.fm to be configured (see Setup).
+- **Ranking Check** - find songs that may be in the wrong ranking playlist.
+  Pick your ranking playlists, best first (e.g. one to four), and your
+  yearly playlist ranked best to worst (it defaults to the playlist named
+  after the current year). It flags songs whose place in the yearly
+  playlist sits among a different ranking, songs you've played more (or,
+  over 90 days or more, less) than three quarters of comparable songs in
+  the next ranking, songs whose yearly position is far from how much you've
+  played them this year, songs in more than one ranking playlist, and
+  yearly songs in no ranking playlist at all. Pick which plays count - the
+  last 7 days to 12 months, this year or all time - and optionally only
+  check songs added to a ranking playlist in that period. Plays are
+  compared within songs you first heard in the period, or within older
+  songs you came back to, since the two behave very differently. Songs at
+  the bottom of the yearly playlist added in the last 30 days count as not
+  ranked yet. The 100 strongest suggestions are listed, each with a
+  preview; move a song to the suggested ranking playlist with one click
+  (it's added to the bottom and taken out of its other ranking playlists),
+  or mark it as fine so it isn't flagged again for 6 months while it stays
+  where it is.
+  Reordering the yearly playlist is left to you. Requires Last.fm to be
+  configured (see Setup), and the first run downloads your listening
+  history (see Listening history below).
 - **Listening Visuals** - your Last.fm listening history as art.
   **Listening Shape** draws every track you played as a glowing stroke,
   placed by when you played it (in your browser's time zone) and coloured
@@ -113,7 +135,8 @@ functions. Currently available:
   (see Setup), and the first run downloads your listening history (see
   Listening history below).
 - **Removal History** - every track Duplicate Finder or Playlist Cleanup
-  removes (standalone or in a Cascade) is logged, keeping the last 20
+  removes (standalone or in a Cascade), or Ranking Check moves out of a
+  ranking playlist, is logged, keeping the last 20
   removals, so you can put tracks back later - all of them or just the
   ones you pick. Restored tracks go back in their original positions if
   the playlist hasn't changed since, otherwise at the end.
@@ -142,8 +165,8 @@ functions. Currently available:
     blank for now - the first time you log in, the app shows your Spotify
     user ID and tells you to set it, then restart and log in again.
 
-    Optionally, to enable Most Played, Forgotten Favourites and Album Swap's
-    album suggestions, also fill in `LASTFM_API_KEY` and `LASTFM_USERNAME` -
+    Optionally, to enable Most Played, Forgotten Favourites, Ranking Check
+    and Album Swap's album suggestions, also fill in `LASTFM_API_KEY` and `LASTFM_USERNAME` -
     get a free API key
     at https://www.last.fm/api/account/create. Everything else works
     without them.
@@ -164,8 +187,8 @@ functions. Currently available:
 
 ## Listening history
 
-Forgotten Favourites, Listening Visuals and Most Played's First/Last Played
-filters use a local copy of every Last.fm scrobble, kept in a SQLite database at
+Forgotten Favourites, Ranking Check, Listening Visuals and Most Played's
+First/Last Played filters use a local copy of every Last.fm scrobble, kept in a SQLite database at
 `.lastfm_cache/scrobbles.sqlite3`. The first tool that needs it downloads
 your full history (about 20 minutes, with a progress screen and **Cancel** -
 a cancelled download carries on where it stopped next time); after that,

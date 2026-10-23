@@ -264,6 +264,30 @@ def album_plays() -> list[dict]:
     ]
 
 
+def track_plays(since_ts: list[int]) -> list[dict]:
+    """Every stored track's first-ever scrobble and its play counts since
+    each timestamp in since_ts, as [{"artist", "name", "first", "plays":
+    [count per since_ts, in the same order]}, ...] - names exactly as
+    stored, so callers group spellings however they need. One pass over
+    the store however many windows are asked for."""
+    if not _PATH.exists():
+        return []
+    sums = ", ".join("SUM(s.timestamp >= ?)" for _ in since_ts)
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            f"SELECT ar.name, t.name, MIN(s.timestamp){', ' + sums if sums else ''} "
+            "FROM scrobbles s "
+            "JOIN tracks t ON t.id = s.track_id "
+            "JOIN artists ar ON ar.id = t.artist_id "
+            "GROUP BY t.id",
+            tuple(since_ts),
+        ).fetchall()
+    return [
+        {"artist": row[0], "name": row[1], "first": row[2], "plays": list(row[3:])}
+        for row in rows
+    ]
+
+
 def lookup(data: dict, artist: str, name: str) -> dict:
     """Looks up a track's {"first", "last"} unix timestamps in an
     already-loaded index (see load()). Empty dict if never scrobbled or

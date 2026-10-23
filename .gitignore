@@ -13,4 +13,5 @@ venv/
 CLAUDE.md
 removal_history.json
 diff_snoozes.json
+ranking_dismissals.json
 .flask_secret_key

@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+{% block title %}Ranking Check - Rotation{% endblock %}
+{% block content %}
+<h1>Ranking Check</h1>
+<p>
+    Find songs that may be in the wrong ranking playlist, by comparing your
+    ranking playlists with your yearly playlist's order and with how much
+    you've played each song on Last.fm.
+</p>
+
+{% if needs_credentials %}
+<p class="warning">
+    No Spotify credentials found. Copy <code>.env.example</code> to
+    <code>.env</code> and fill in <code>SPOTIFY_CLIENT_ID</code> and
+    <code>SPOTIFY_CLIENT_SECRET</code>, then restart the app. See the README for
+    how to register a Spotify app.
+</p>
+{% elif needs_lastfm %}
+<p class="warning">
+    No Last.fm credentials found. Copy <code>.env.example</code> to
+    <code>.env</code> and fill in <code>LASTFM_API_KEY</code> and
+    <code>LASTFM_USERNAME</code>, then restart the app. See the README for
+    how to get a free Last.fm API key.
+</p>
+{% elif not logged_in %}
+<p><a class="button" href="{{ url_for('login') }}">Log in with Spotify</a></p>
+{% else %}
+<form method="get" action="{{ url_for('ranking_check_scan') }}" id="picker-form">
+    <fieldset>
+        <legend>Ranking playlists, best first</legend>
+        <div id="tier-combo-list"></div>
+        <p>
+            <button class="button secondary" id="add-tier-btn" type="button">
+                + Add another playlist
+            </button>
+        </p>
+    </fieldset>
+
+    <fieldset>
+        <legend>Yearly playlist, ranked best to worst</legend>
+        <div class="combo">
+            <input
+                type="text"
+                id="year-combo-input"
+                class="combo-input"
+                placeholder="Search your playlists…"
+                autocomplete="off"
+            />
+            <div class="combo-panel" id="year-combo-panel"></div>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Count plays from</legend>
+        <select name="period" id="period">
+            {% for p in periods %}
+            <option value="{{ p.key }}" {{ 'selected' if p.key == default_period else '' }}>{{ p.label }}</option>
+            {% endfor %}
+        </select>
+        <p>
+            <label>
+                <input type="checkbox" name="only_added" value="1" />
+                Only songs added to a ranking playlist in this period
+            </label>
+        </p>
+        <p class="hint">
+            The period only changes which plays count - every song in your ranking
+            playlists is checked unless you tick the box. Comparing your yearly
+            playlist's order with plays always uses plays since 1 January.
+        </p>
+    </fieldset>
+
+    <p id="picker-loading"><span class="spinner"></span>Loading playlists…</p>
+    <p class="warning" id="picker-error" style="display: none"></p>
+    <p>
+        <button class="button" type="submit" id="submit-btn" disabled>Check rankings</button>
+    </p>
+</form>
+
+{% if dismissals %}
+<h2>Dismissed songs</h2>
+<p class="hint">
+    You marked these as fine. Each stays hidden for {{ dismiss_months }} months, as long as
+    it's still in the ranking playlist(s) shown - move it and it can be flagged again
+    straight away.
+</p>
+<ul>
+    {% for d in dismissals %}
+    <li>
+        {{ d.artists }} – {{ d.name }}
+        <span class="track-meta">
+            {{ d.tier_names | join(', ') if d.tier_names else 'not in a ranking playlist' }},
+            hidden until {{ d.until[:10] }}
+        </span>
+        <form method="post" action="{{ url_for('ranking_check_restore') }}" style="display: inline">
+            <input type="hidden" name="key" value="{{ d.key }}" />
+            <button class="button secondary" type="submit">Restore</button>
+        </form>
+    </li>
+    {% endfor %}
+</ul>
+{% endif %}
+
+<script src="{{ url_for('static', filename='playlist_picker.js') }}"></script>
+<script>
+    const DEFAULT_TIERS = {{ default_prefs | tojson }};
+    const tierRows = createComboRowManager(document.getElementById("tier-combo-list"), 2);
+    let yearCombo = null;
+
+    document.getElementById("add-tier-btn").addEventListener("click", () => tierRows.addRow(null));
+
+    (async () => {
+        const errorEl = document.getElementById("picker-error");
+        let playlists = [];
+        try {
+            playlists = await fetchPlaylists("{{ url_for('api_playlists') }}", "{{ url_for('login') }}");
+        } catch (e) {
+            errorEl.textContent = "Failed to load your playlists. Check your connection and try again.";
+            errorEl.style.display = "block";
+        }
+        document.getElementById("picker-loading").style.display = "none";
+
+        tierRows.reset(Array.isArray(DEFAULT_TIERS) && DEFAULT_TIERS.length ? DEFAULT_TIERS : [null, null, null, null]);
+
+        // The yearly playlist is named after the year, so January just works.
+        const thisYear = String(new Date().getFullYear());
+        const yearPlaylist = playlists.find((p) => p.name.trim() === thisYear);
+        yearCombo = setupCombo(
+            document.getElementById("year-combo-input"),
+            document.getElementById("year-combo-panel"),
+            yearPlaylist ? { id: yearPlaylist.id, name: yearPlaylist.name } : null,
+        );
+        document.getElementById("submit-btn").disabled = false;
+    })();
+
+    document.getElementById("picker-form").addEventListener("submit", (e) => {
+        const form = e.target;
+        const errorEl = document.getElementById("picker-error");
+        const tiers = tierRows.getValues();
+        const year = yearCombo ? yearCombo.getValue() : { id: null };
+        let error = null;
+        if (tiers.some((t) => !t.id)) {
+            error = "Pick a playlist for every ranking slot (or remove empty ones).";
+        } else if (new Set(tiers.map((t) => t.id)).size !== tiers.length) {
+            error = "Each ranking playlist can only be picked once.";
+        } else if (!year.id) {
+            error = "Pick your yearly playlist.";
+        } else if (tiers.some((t) => t.id === year.id)) {
+            error = "The yearly playlist can't also be a ranking playlist.";
+        }
+        if (error) {
+            e.preventDefault();
+            errorEl.textContent = error;
+            errorEl.style.display = "block";
+            return;
+        }
+        errorEl.style.display = "none";
+
+        form.querySelectorAll("input[data-generated]").forEach((el) => el.remove());
+        const addHidden = (name, value) => {
+            const input = document.createElement("input");
+            input.type = "hidden";
+            input.name = name;
+            input.value = value;
+            input.dataset.generated = "1";
+            form.appendChild(input);
+        };
+        tiers.forEach((t) => addHidden("tier_id", t.id));
+        addHidden("year_id", year.id);
+    });
+</script>
+{% endif %} {% endblock %}

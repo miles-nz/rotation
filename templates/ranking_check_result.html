@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block title %}Ranking Check - Rotation{% endblock %}
+{% block extra_style %}
+.rank-song { border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin: 0.75rem 0; }
+.rank-title { font-weight: bold; margin-bottom: 0.25rem; }
+.rank-flags { margin: 0.6rem 0; padding-left: 1.2rem; }
+.rank-flags li { margin: 0.2rem 0; }
+.rank-reorder { margin: 0.4rem 0; font-size: 0.9rem; }
+.rank-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-top: 0.75rem; }
+.rank-actions form { display: inline; margin: 0; }
+.rank-actions .button { margin: 0; }
+.rank-status { margin-top: 0.75rem; font-weight: 600; }
+.rank-status form { display: inline; }
+.explicit-badge { display: inline-block; font-size: 0.65rem; line-height: 1; border: 1px solid var(--muted); border-radius: 3px; padding: 0.15rem 0.25rem; margin-left: 0.4rem; color: var(--muted); vertical-align: middle; font-weight: normal; }
+.preview-btn { background: none; border: 1px solid var(--border); border-radius: 50%; width: 1.8rem; height: 1.8rem; padding: 0; cursor: pointer; color: var(--text); font-size: 0.7rem; line-height: 1; }
+.preview-btn:hover { border-color: var(--accent); color: var(--accent); }
+.rank-embed { border-radius: 12px; overflow: hidden; margin-top: 0.75rem; background: var(--bg); }
+.rank-embed iframe { display: block; border: none; }
+{% endblock %}
+{% block content %}
+<h1>Ranking Check</h1>
+
+<p class="hint">
+    {{ tiers | map(attribute='name') | join(' → ') }}, compared with {{ year_playlist_name }}
+    and {{ period_plays }}{{ ', only songs added in that period' if only_added_in_period else '' }}.
+</p>
+
+{% if unranked_count %}
+<p class="hint">
+    The last {{ unranked_count }} song{{ 's' if unranked_count != 1 else '' }} in {{ year_playlist_name }}
+    {{ 'were' if unranked_count != 1 else 'was' }} added in the last {{ unranked_days }} days, so
+    {{ 'they are' if unranked_count != 1 else 'it is' }} treated as not ranked yet and left out of the
+    {{ year_playlist_name }} checks.
+</p>
+{% endif %}
+{% if not demotions_enabled %}
+<p class="hint">
+    Plays only suggest moving songs up for periods under {{ demotion_min_days }} days - a song
+    not played lately doesn't mean it deserves a lower ranking.
+</p>
+{% endif %}
+{% if not year_check_enabled %}
+<p class="hint">
+    {{ year_playlist_name }} has too few ranked songs to compare with plays this year.
+</p>
+{% endif %}
+{% if dismissed_hidden %}
+<p class="hint">
+    {{ dismissed_hidden }} song{{ 's' if dismissed_hidden != 1 else '' }} you marked as fine
+    {{ 'are' if dismissed_hidden != 1 else 'is' }} hidden - see the list on the
+    <a href="{{ url_for('ranking_check_picker') }}">Ranking Check page</a>.
+</p>
+{% endif %}
+
+{% if not results %}
+<p class="hint">Nothing to flag - your rankings all line up.</p>
+<p><a class="button" href="{{ url_for('ranking_check_picker') }}">Back</a></p>
+{% else %}
+<p>
+    {% if total_flagged > results|length %}
+    Found {{ total_flagged }} songs to look at - showing the {{ results|length }} strongest.
+    {% else %}
+    Found {{ total_flagged }} song{{ 's' if total_flagged != 1 else '' }} to look at, strongest first.
+    {% endif %}
+    Songs flagged by more than one check come first. Moving a song takes it out of its
+    other ranking playlists and adds it to the bottom of the new one; reordering
+    {{ year_playlist_name }} is up to you.
+</p>
+
+{% for r in results %}
+<div class="rank-song" id="song-{{ loop.index }}">
+    <div class="rank-title">
+        {{ r.artists }} – {{ r.name }}{% if r.explicit %}<span class="explicit-badge">E</span>{% endif %}
+    </div>
+    <div class="track-meta">
+        {% if r.tiers %}
+        {% for t in r.tiers %}In {{ t.name }}{% if t.added %} since {{ t.added }}{% endif %}{{ ', ' if not loop.last else '' }}{% endfor %}
+        {% else %}
+        Not in a ranking playlist
+        {% endif %}
+        {% if r.year_position %} · #{{ r.year_position }} in {{ year_playlist_name }}{% endif %}
+        · {{ r.plays }} play{{ 's' if r.plays != 1 else '' }} in the period
+        {% if period_label != 'This year' %} · {{ r.plays_ytd }} this year{% endif %}
+    </div>
+
+    <ul class="rank-flags">
+        {% for f in r.flags %}
+        <li>{{ f.text }}</li>
+        {% endfor %}
+    </ul>
+
+    {% for line in r.reorder %}
+    <p class="rank-reorder hint">{{ line }}</p>
+    {% endfor %}
+
+    {% if r.status and r.status.kind == 'moved' %}
+    <p class="rank-status">
+        ✓ {{ r.status.text }}
+        {% if r.status.history_id %}
+        <span class="track-meta">- the removal is in <a href="{{ url_for('removal_history') }}">Removal History</a></span>
+        {% endif %}
+    </p>
+    {% elif r.status and r.status.kind == 'dismissed' %}
+    <div class="rank-status">
+        Marked as fine - it won't be flagged again before {{ r.status.until[:10] }}, as long as it stays
+        {{ 'in ' ~ (r.tiers | map(attribute='name') | join(', ')) if r.tiers else 'out of the ranking playlists' }}.
+        <form method="post" action="{{ url_for('ranking_check_restore') }}">
+            <input type="hidden" name="key" value="{{ r.key }}" />
+            <input type="hidden" name="from" value="result" />
+            <button class="button secondary" type="submit">Undo</button>
+        </form>
+    </div>
+    {% else %}
+    <div class="rank-actions">
+        <button type="button" class="preview-btn" data-uri="{{ r.uri }}" title="Preview">▶</button>
+        {% for m in r.moves %}
+        <form method="post" action="{{ url_for('ranking_check_move') }}">
+            <input type="hidden" name="key" value="{{ r.key }}" />
+            <input type="hidden" name="tier" value="{{ m.tier }}" />
+            <button class="button" type="submit">{{ m.label }}</button>
+        </form>
+        {% endfor %}
+        <form method="post" action="{{ url_for('ranking_check_dismiss') }}">
+            <input type="hidden" name="key" value="{{ r.key }}" />
+            <button class="button secondary" type="submit">This is fine</button>
+        </form>
+        {% if r.is_local %}
+        <span class="track-meta">Local file - Spotify can't add it to another playlist, so move it yourself.</span>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endfor %}
+
+<p style="margin-top: 1.5rem">
+    <a class="button secondary" href="{{ url_for('ranking_check_picker') }}">Back</a>
+</p>
+
+<script src="{{ url_for('static', filename='spotify_embeds.js') }}"></script>
+<script>
+    // One embed per song is a lot of iframes, so previews only load when asked for.
+    document.querySelectorAll(".preview-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            const card = btn.closest(".rank-song");
+            const existing = card.querySelector(".rank-embed");
+            if (existing) {
+                existing.remove();
+                btn.textContent = "▶";
+                btn.title = "Preview";
+                return;
+            }
+            const embed = document.createElement("div");
+            embed.className = "rank-embed";
+            embed.dataset.uri = btn.dataset.uri;
+            card.appendChild(embed);
+            SpotifyEmbeds.mount(embed);
+            btn.textContent = "■";
+            btn.title = "Hide preview";
+        });
+    });
+
+    // A move takes a few seconds; stop a second click on the same song.
+    document.querySelectorAll(".rank-actions form").forEach((form) => {
+        form.addEventListener("submit", () => {
+            form.closest(".rank-actions").querySelectorAll("button").forEach((b) => (b.disabled = true));
+        });
+    });
+</script>
+{% endif %} {% endblock %}
