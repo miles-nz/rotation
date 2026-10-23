@@ -11,7 +11,8 @@
     <li>
         <strong>{{ s.label }}</strong>:
         {% if s.type == 'duplicates' %} removed {{ s.removed }} track{{ 's' if
-        s.removed != 1 else '' }} {% elif s.type == 'playlist_filter' %} {% if not s.added
+        s.removed != 1 else '' }}{% if s.marked %}, marked {{ s.marked }}
+        song{{ 's' if s.marked != 1 else '' }} as not a duplicate{% endif %} {% elif s.type == 'playlist_filter' %} {% if not s.added
         and not s.skipped and not s.local_skipped %} nothing added {% else %}
         added {{ s.added }} track{{ 's' if s.added != 1 else '' }} to "{{
         s.playlist_name }}"{% if s.skipped %} ({{ s.skipped }} already

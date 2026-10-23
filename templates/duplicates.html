@@ -60,6 +60,30 @@
     </p>
 </div>
 
+{% if not_duplicates %}
+<h2>Not duplicates</h2>
+<p class="hint">
+    You marked these as not duplicates, so they aren't shown unless another
+    copy turns up - in another playlist, or on another release.
+</p>
+<ul>
+    {% for m in not_duplicates %}
+    <li>
+        {{ m.artists }} – {{ m.name }}
+        <span class="track-meta">in {{ m.playlist_names | join(', ') }}</span>
+        <form
+            method="post"
+            action="{{ url_for('duplicates_unmark') }}"
+            style="display: inline"
+        >
+            <input type="hidden" name="key" value="{{ m.key }}" />
+            <button class="button secondary" type="submit">Un-mark</button>
+        </form>
+    </li>
+    {% endfor %}
+</ul>
+{% endif %}
+
 <script src="{{ url_for('static', filename='playlist_picker.js') }}"></script>
 <script src="{{ url_for('static', filename='saved_defaults.js') }}"></script>
 <script>

@@ -12,7 +12,10 @@ functions. Currently available:
   you can select which playlist(s) to remove each duplicate from. It also
   catches the same song on different releases (e.g. the single and the
   album cut): same artists, same title once version suffixes like
-  "- Remastered 2011" are stripped, and lengths within 2 seconds.
+  "- Remastered 2011" are stripped, and lengths within 2 seconds. Anything
+  you mark as not a duplicate stays hidden from later scans until another
+  copy turns up (in another playlist, or on another release); marks can be
+  undone from the Duplicate Finder page.
 - **Track Search** - search Spotify's catalog and preview any track with
   the embedded player.
 - **All Playlists** - lists every playlist in your library; click a name or

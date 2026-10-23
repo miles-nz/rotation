@@ -13,6 +13,7 @@ venv/
 CLAUDE.md
 removal_history.json
 diff_snoozes.json
+not_duplicates.json
 ranking_dismissals.json
 snapshots/
 snapshots_last_run.json

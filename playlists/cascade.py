@@ -10,6 +10,7 @@ from core.cancellation import CancelCheck
 from playlists.playlist_cache import PlaylistCache
 import playlists.diff_snoozes as diff_snoozes_module
 import playlists.duplicates as duplicates_module
+import playlists.not_duplicates as not_duplicates_module
 import playlists.playlist_filter as playlist_filter_module
 import playlists.playlist_cleanup as playlist_cleanup_module
 import playlists.playlist_diff as playlist_diff_module
@@ -151,7 +152,8 @@ def apply_step(sp: Spotify, cache: PlaylistCache, step: dict, result: Any, form)
         duplicates_module.remove_from_playlists(sp, removals, source=f"Cascade - {label}")
         for removal in removals:
             cache.remove_tracks(removal["playlist_id"], [removal["uri"]])
-        return {"type": step_type, "label": label, "removed": len(removals)}
+        marked = not_duplicates_module.mark(duplicates_module.not_duplicates_from_form(result, form))
+        return {"type": step_type, "label": label, "removed": len(removals), "marked": marked}
 
     if step_type == "playlist_filter":
         match_uris = {m["uri"] for m in result["matches"]}

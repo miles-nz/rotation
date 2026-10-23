@@ -8,7 +8,9 @@ background: var(--bg); } .dup-embed iframe { display: block; border: none; } .oc
 1; } .occurrence .added-date { color: var(--muted); font-size: 0.85rem; }
 .release + .release { margin-top: 0.5rem; padding-top: 0.75rem; border-top:
 1px solid var(--border); } .release-title { color:
-var(--muted); font-size: 0.9rem; margin-bottom: 0.4rem; } {% endblock %} {% block content %}
+var(--muted); font-size: 0.9rem; margin-bottom: 0.4rem; } .not-duplicate {
+margin-top: 0.25rem; padding-top: 0.5rem; border-top: 1px solid var(--border);
+color: var(--muted); } {% endblock %} {% block content %}
 <h1>Duplicates</h1>
 
 {% if cascade_step %}
@@ -38,21 +40,28 @@ macro occurrence_rows(release) %} {% for occ in release.occurrences %}
         >added {{ occ.added_at[:10] if occ.added_at else 'unknown date' }}</span
     >
 </label>
-{% endfor %} {% endmacro %}
+{% endfor %} {% endmacro %} {% macro not_duplicate_row(dup) %}
+<label class="occurrence not-duplicate">
+    <input type="checkbox" name="not_duplicate" value="{{ dup.key }}" />
+    <span>Not a duplicate - don't show again</span>
+</label>
+{% endmacro %}
 <p>
     {% if exact %}Found {{ exact|length }} track{{ 's' if exact|length != 1
     else '' }} that {{ 'appear' if exact|length != 1 else 'appears' }} in more
     than one playlist{% endif %}{% if exact and releases %}, and {% elif
     releases %}Found {% endif %}{% if releases %}{{ releases|length }}
     song{{ 's' if releases|length != 1 else '' }} on more than one
-    release{% endif %}. Check the playlists you want to remove each from.
+    release{% endif %}. Check the playlists you want to remove each from, or
+    mark it as not a duplicate so it isn't shown again unless another copy
+    turns up.
 </p>
 <form method="post" action="{{ form_action or url_for('duplicates_remove') }}">
     {% for dup in exact %} {% set release = dup.releases[0] %}
     <div class="dup-group">
         <div class="dup-title">{{ dup.artists }} – {{ dup.name }}</div>
         <div class="dup-embed" data-spotify-embed data-uri="{{ release.uri }}"></div>
-        {{ occurrence_rows(release) }}
+        {{ occurrence_rows(release) }} {{ not_duplicate_row(dup) }}
     </div>
     {% endfor %} {% if releases %}
     <h2>Same song, different release</h2>
@@ -77,7 +86,7 @@ macro occurrence_rows(release) %} {% for occ in release.occurrences %}
             ></div>
             {{ occurrence_rows(release) }}
         </div>
-        {% endfor %}
+        {% endfor %} {{ not_duplicate_row(dup) }}
     </div>
     {% endfor %} {% endif %}
     <p style="margin-top: 1.5rem">
@@ -96,13 +105,30 @@ macro occurrence_rows(release) %} {% for occ in release.occurrences %}
     (function () {
         const submitButton = document.getElementById("apply-submit");
         const checkboxes = document.querySelectorAll('input[name="remove"]');
+        const marks = document.querySelectorAll('input[name="not_duplicate"]');
         function updateLabel() {
             const anyChecked = Array.from(checkboxes).some((c) => c.checked);
+            const anyMarked = Array.from(marks).some((c) => c.checked);
             submitButton.textContent = anyChecked
                 ? "Remove selected"
-                : "Continue without removing";
+                : anyMarked
+                  ? "Save"
+                  : "Continue without removing";
         }
         checkboxes.forEach((c) => c.addEventListener("change", updateLabel));
+        // Marking a song as not a duplicate and removing copies of it are
+        // either/or.
+        marks.forEach((mark) => {
+            mark.addEventListener("change", () => {
+                mark.closest(".dup-group")
+                    .querySelectorAll('input[name="remove"]')
+                    .forEach((remove) => {
+                        if (mark.checked) remove.checked = false;
+                        remove.disabled = mark.checked;
+                    });
+                updateLabel();
+            });
+        });
         updateLabel();
     })();
 </script>

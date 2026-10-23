@@ -22,6 +22,7 @@ from core.sync import apply_diff, get_target_diff
 import playlists.cascade as cascade_module
 import playlists.diff_snoozes as diff_snoozes_module
 import playlists.duplicates as duplicates_module
+import playlists.not_duplicates as not_duplicates_module
 import playlists.playlist_cache as playlist_cache_module
 import playlists.playlist_filter as playlist_filter_module
 import playlists.playlist_cleanup as playlist_cleanup_module
@@ -911,7 +912,25 @@ def duplicates_picker():
         needs_credentials=False,
         logged_in=sp is not None,
         default_prefs=_default_preferences("duplicates", sp),
+        not_duplicates=not_duplicates_module.list_active() if sp is not None else [],
     )
+
+
+@app.route("/duplicates/unmark", methods=["POST"])
+def duplicates_unmark():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    # key as a form field rather than in the path - it's made of Spotify
+    # uris, which contain colons.
+    key = request.form.get("key")
+    if key:
+        not_duplicates_module.unmark(key)
+    return redirect(url_for("duplicates_picker"))
 
 
 @app.route("/duplicates/scan")
@@ -982,10 +1001,16 @@ def duplicates_remove():
             removals.append({"playlist_id": playlist_id, "uri": uri})
 
     history_id = duplicates_module.remove_from_playlists(sp, removals)
+    marked = not_duplicates_module.mark(
+        duplicates_module.not_duplicates_from_form(_dup_job.result or [], request.form)
+    )
     _dup_job.result = None
 
     return render_template(
-        "duplicates_removed.html", removed_count=len(removals), history_id=history_id
+        "duplicates_removed.html",
+        removed_count=len(removals),
+        history_id=history_id,
+        marked_count=marked,
     )
 
 

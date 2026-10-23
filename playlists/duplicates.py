@@ -6,6 +6,7 @@ import re
 from spotipy import Spotify
 
 from core.cancellation import CancelCheck
+import playlists.not_duplicates as not_duplicates_module
 import playlists.playlist_cache as playlist_cache_module
 import playlists.removal_history as removal_history_module
 
@@ -157,7 +158,7 @@ def find_duplicates_from_tracks(playlists: list[dict]) -> list[dict]:
 
     Returns duplicate groups, sorted by artist/name. Every group lists one
     or more releases (distinct uris) and where each one appears:
-    [{"kind": "exact" | "release", "uri", "name", "artists",
+    [{"kind": "exact" | "release", "key", "uri", "name", "artists",
       "releases": [{"uri", "name", "album", "duration_ms",
                     "occurrences": [{"playlist_id", "playlist_name",
                                      "added_at"}, ...]}, ...]}]
@@ -165,7 +166,12 @@ def find_duplicates_from_tracks(playlists: list[dict]) -> list[dict]:
     "exact" groups are one uri in more than one place. "release" groups are
     the same song on two or more different releases (see _release_clusters),
     with every occurrence of each of them - a song that matches both ways
-    only appears as a "release" group."""
+    only appears as a "release" group. "key" identifies the group by its
+    uris.
+
+    Groups marked "not a duplicate" are left out while no new copy has
+    turned up (see not_duplicates), so every caller - standalone, Cascade
+    and the scheduled auto-scan - stops showing them."""
     occurrences_by_uri: dict[str, list[dict]] = {}
     track_by_uri: dict[str, dict] = {}
 
@@ -196,6 +202,7 @@ def find_duplicates_from_tracks(playlists: list[dict]) -> list[dict]:
         first = track_by_uri[min(releases, key=lambda r: len(r["name"]))["uri"]]
         return {
             "kind": kind,
+            "key": ",".join(sorted(r["uri"] for r in releases)),
             "uri": first["uri"],
             "name": first["name"],
             "artists": first["artists"],
@@ -216,14 +223,33 @@ def find_duplicates_from_tracks(playlists: list[dict]) -> list[dict]:
         if len(occurrences) > 1 and uri not in grouped_uris:
             duplicates.append(group("exact", [release(uri)]))
 
-    duplicates.sort(key=lambda d: (d["artists"].lower(), d["name"].lower()))
+    marks = not_duplicates_module.active()
+    shown = [d for d in duplicates if not not_duplicates_module.is_marked(d, marks)]
+
+    shown.sort(key=lambda d: (d["artists"].lower(), d["name"].lower()))
     logger.info(
-        "found %d duplicate song(s) across %d playlists (%d on different releases)",
-        len(duplicates),
+        "found %d duplicate song(s) across %d playlists (%d on different releases), "
+        "%d marked not a duplicate",
+        len(shown),
         len(playlists),
-        sum(1 for d in duplicates if d["kind"] == "release"),
+        sum(1 for d in shown if d["kind"] == "release"),
+        len(duplicates) - len(shown),
     )
-    return duplicates
+    return shown
+
+
+def not_duplicates_from_form(result: list[dict], form) -> list[dict]:
+    """The groups from a find_duplicates result ticked "not a duplicate" in
+    the submitted form. A group with copies also being removed isn't
+    marked - it's being dealt with as a duplicate after all."""
+    marked_keys = set(form.getlist("not_duplicate"))
+    removing_uris = {item.partition("::")[2] for item in form.getlist("remove")}
+    return [
+        d
+        for d in result
+        if d["key"] in marked_keys
+        and not any(r["uri"] in removing_uris for r in d["releases"])
+    ]
 
 
 def find_duplicates(
