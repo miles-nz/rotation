@@ -175,8 +175,11 @@ sqlite3 .lastfm_cache/scrobbles.sqlite3 ".backup scrobbles-backup.sqlite3"
 
 ## Deploying to Railway
 
-The app ships with a `Procfile` (`gunicorn app:app --bind 0.0.0.0:$PORT`), so
-Railway can build and run it with no extra config.
+The app ships with a `Procfile` (`gunicorn app:app --bind 0.0.0.0:$PORT
+--workers 1 --threads 8`), so Railway can build and run it with no extra
+config. Keep it to one worker: background jobs and their progress live in
+memory, so a second worker process wouldn't see them. The threads let a slow
+request (like Album Swap's suggestions) run without holding up the others.
 
 1. In Railway, create a new project from this GitHub repo.
 2. Under the service's **Variables**, add `SPOTIFY_CLIENT_ID`,
