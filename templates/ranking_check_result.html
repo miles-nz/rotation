@@ -16,8 +16,90 @@
 .preview-btn:hover { border-color: var(--accent); color: var(--accent); }
 .rank-embed { border-radius: 12px; overflow: hidden; margin-top: 0.75rem; background: var(--bg); }
 .rank-embed iframe { display: block; border: none; }
+/* Blue is always the song; amber, orange and red (the meter only) say how
+   strong the inconsistency is; green is the song's own ranking. */
+.rank-song { --song: #2563eb; --sev-1: #b7791f; --sev-2: #ea580c; --sev-3: #dc2626; }
+@media (prefers-color-scheme: dark) {
+  .rank-song { --song: #60a5fa; --sev-1: #facc15; --sev-2: #fb923c; --sev-3: #f87171; }
+}
+.rank-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
+.meter { display: flex; align-items: center; gap: 0.4rem; flex-shrink: 0; font-size: 0.85rem; color: var(--muted); }
+.meter-cells { display: inline-flex; gap: 2px; }
+.meter-cell { width: 0.7rem; height: 0.7rem; border-radius: 2px; background: var(--secondary-bg); border: 1px solid var(--border); }
+.meter-mild { --sev: var(--sev-1); }
+.meter-moderate { --sev: var(--sev-2); }
+.meter-strong { --sev: var(--sev-3); }
+.meter-cell.on { background: var(--sev); border-color: var(--sev); }
+.meter-label { color: var(--sev); font-weight: 600; }
+.meter-strong .meter-label { font-weight: 700; }
+.meter-label { min-width: 4.5rem; }
+.rank-charts { margin: 0.25rem 0 0.75rem 1.2rem; max-width: 34rem; }
+.chart { margin: 0.5rem 0; }
+.chart-caption { font-size: 0.75rem; color: var(--muted); margin-bottom: 0.2rem; }
+.strip-marks { position: relative; height: 1.2rem; font-size: 0.8rem; }
+.strip-mark-label { position: absolute; bottom: 0.1rem; transform: translateX(-50%); white-space: nowrap; font-weight: 700; color: var(--song); }
+.strip-mark-label.at-start { transform: translateX(-0.5rem); }
+.strip-mark-label.at-end { transform: translateX(calc(-100% + 0.5rem)); }
+.strip { position: relative; height: 1.4rem; }
+.strip-sec { position: absolute; top: 0; bottom: 0; background: var(--border); box-shadow: inset -2px 0 0 var(--bg); }
+.strip-sec:first-child { border-radius: 6px 0 0 6px; }
+.strip-sec:last-of-type { border-radius: 0 6px 6px 0; box-shadow: none; }
+.strip-sec.own { background: var(--accent); }
+.strip-dot { position: absolute; top: 50%; width: 0.95rem; height: 0.95rem; margin: -0.475rem 0 0 -0.475rem; border-radius: 50%; background: var(--song); box-shadow: 0 0 0 2px var(--bg); }
+.strip-names { position: relative; height: 1.1rem; margin-top: 0.15rem; font-size: 0.72rem; color: var(--muted); }
+.strip-name { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+.strip-name.own { color: var(--text); font-weight: 600; }
+.pbars { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 0.6rem; align-items: center; font-size: 0.8rem; }
+.pbar-label { color: var(--muted); white-space: nowrap; }
+.pbar-label.song { color: var(--text); font-weight: 600; }
+.pbar-track { display: flex; align-items: center; gap: 0.4rem; }
+.pbar { height: 0.8rem; min-width: 3px; border-radius: 3px; background: var(--border-light); }
+.pbar.song { background: var(--song); }
+.pbar-label.song { color: var(--song); }
+.pbar-value { white-space: nowrap; font-variant-numeric: tabular-nums; }
 {% endblock %}
 {% block content %}
+{# The yearly playlist as one strip split into each ranking's section: the
+   song's own ranking in green, everything else grey, and the song itself as
+   a blue dot - so the gap between the dot and the green is the problem. #}
+{% macro strip(position, own_tier) %}
+{% set pct = 100 / year_length %}
+{# Near either end a centred label would hang off the strip, so it lines up with that end instead. #}
+{% set left = (position - 0.5) * pct %}
+<div class="chart">
+    <div class="strip-marks">
+        <span class="strip-mark-label{{ ' at-start' if left < 10 else ' at-end' if left > 90 else '' }}" style="left: {{ '%.2f' % left }}%">#{{ position }}</span>
+    </div>
+    <div class="strip">
+        {% for sec in year_sections %}
+        <div class="strip-sec{{ ' own' if sec.tier == own_tier else '' }}"
+             style="left: {{ '%.2f' % ((sec.start - 1) * pct) }}%; width: {{ '%.2f' % ((sec.end - sec.start + 1) * pct) }}%"
+             title="{{ sec.name }}: #{{ sec.start }}–{{ sec.end }}"></div>
+        {% endfor %}
+        <div class="strip-dot" style="left: {{ '%.2f' % left }}%" title="This song: #{{ position }}"></div>
+    </div>
+    <div class="strip-names">
+        {% for sec in year_sections if (sec.end - sec.start + 1) * pct >= 12 %}
+        <span class="strip-name{{ ' own' if sec.tier == own_tier else '' }}" style="left: {{ '%.2f' % (((sec.start + sec.end) / 2 - 0.5) * pct) }}%">{{ sec.name }}</span>
+        {% endfor %}
+    </div>
+</div>
+{% endmacro %}
+
+{# This song's plays against a typical song from the suggested ranking. #}
+{% macro plays_bars(chart) %}
+{% set top = [chart.plays, chart.typical.plays] | max %}
+<div class="chart">
+    <div class="chart-caption">Plays in the period</div>
+    <div class="pbars">
+        <span class="pbar-label">Typical {{ chart.typical.name }}</span>
+        <span class="pbar-track"><span class="pbar" style="width: {{ '%.1f' % (chart.typical.plays / top * 85 if top else 0) }}%"></span><span class="pbar-value">{{ chart.typical.plays }}</span></span>
+        <span class="pbar-label song">This song</span>
+        <span class="pbar-track"><span class="pbar song" style="width: {{ '%.1f' % (chart.plays / top * 85 if top else 0) }}%"></span><span class="pbar-value">{{ chart.plays }}</span></span>
+    </div>
+</div>
+{% endmacro %}
+
 <h1>Ranking Check</h1>
 
 <p class="hint">
@@ -62,15 +144,22 @@
     {% else %}
     Found {{ total_flagged }} song{{ 's' if total_flagged != 1 else '' }} to look at, strongest first.
     {% endif %}
-    Songs flagged by more than one check come first. Moving a song takes it out of its
+    The meter adds up how far past the line each check is, so songs several checks agree
+    on fill more of it. Moving a song takes it out of its
     other ranking playlists and adds it to the bottom of the new one; reordering
     {{ year_playlist_name }} is up to you.
 </p>
 
 {% for r in results %}
 <div class="rank-song" id="song-{{ loop.index }}">
-    <div class="rank-title">
-        {{ r.artists }} – {{ r.name }}{% if r.explicit %}<span class="explicit-badge">E</span>{% endif %}
+    <div class="rank-head">
+        <div class="rank-title">
+            {{ r.artists }} – {{ r.name }}{% if r.explicit %}<span class="explicit-badge">E</span>{% endif %}
+        </div>
+        <div class="meter meter-{{ r.strength_label | lower }}" title="Strength {{ r.score }} of {{ meter_max }}">
+            <span class="meter-cells">{% for i in range(meter_max) %}<span class="meter-cell{{ ' on' if i < r.score else '' }}"></span>{% endfor %}</span>
+            <span class="meter-label">{{ r.strength_label }}</span>
+        </div>
     </div>
     <div class="track-meta">
         {% if r.tiers %}
@@ -88,6 +177,17 @@
         <li>{{ f.text }}</li>
         {% endfor %}
     </ul>
+
+    {# One strip for any yearly check on the song, then the plays bars. #}
+    {% set has_strip = r.flags | selectattr('chart') | map(attribute='chart') | selectattr('type', 'equalto', 'strip') | list %}
+    {% set plays_flags = r.flags | selectattr('check', 'equalto', 'plays') | list %}
+    {% if has_strip or plays_flags %}
+    <div class="rank-charts">
+        {# The checks compare against a song's best ranking, so that's the one shown. #}
+        {% if has_strip %}{{ strip(r.year_position, r.tiers[0].index if r.tiers else None) }}{% endif %}
+        {% for f in plays_flags %}{{ plays_bars(f.chart) }}{% endfor %}
+    </div>
+    {% endif %}
 
     {% for line in r.reorder %}
     <p class="rank-reorder hint">{{ line }}</p>

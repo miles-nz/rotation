@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from statistics import quantiles
+from statistics import median, quantiles
 
 from spotipy import Spotify
 
@@ -68,6 +68,24 @@ UNRANKED_TAIL_DAYS = 30
 # Strongest first, so the top of the list is what's worth a look; the rest
 # would mostly be one-flag, one-ranking-off suggestions.
 MAX_RESULTS = 100
+
+# How strong a song's inconsistency is: each flag scores 1-3 points for how
+# far past its line it is (FLAG_POINTS_MAX), and the song's meter is the
+# total, capped at METER_MAX, so a song several checks agree on fills more
+# of it. A song in more than one ranking playlist, or in none, is always 1 -
+# it's either the case or it isn't.
+FLAG_POINTS_MAX = 3
+METER_MAX = 5
+STRENGTH_LABELS = [(4, "Strong"), (3, "Moderate"), (1, "Mild")]
+
+# Yearly order vs ranking playlists: an extra point each for being at least
+# this far (as a fraction of the yearly playlist) past the edge of the
+# song's own ranking's section.
+YEAR_DEPTH_FRACTIONS = (0.05, 0.15)
+
+# Plays: an extra point for out-playing the bar by this much (moving up) or
+# falling this far under it (moving down).
+PLAYS_FAR_PAST = 2
 
 
 def _period(key: str) -> dict:
@@ -136,9 +154,17 @@ def _plural(count: int, word: str) -> str:
     return f"{count} {word}{'s' if count != 1 else ''}"
 
 
-def _percent(count: int, total: int) -> int:
-    """count as a whole percentage of total, never rounded down to 0."""
-    return max(round(100 * count / total), 1) if total else 0
+def _points(base: float, extra: int = 0) -> int:
+    return max(1, min(FLAG_POINTS_MAX, int(base) + extra))
+
+
+def _strength_label(score: int) -> str:
+    return next(label for floor, label in STRENGTH_LABELS if score >= floor)
+
+
+def _times(ratio: float) -> str:
+    """"3×", or "2.5×" - one decimal only where it matters."""
+    return f"{ratio:.0f}×" if ratio >= 10 or abs(ratio - round(ratio)) < 0.05 else f"{ratio:.1f}×"
 
 
 def _fit_year_order(sequence: list[int | None], tier_count: int) -> list[int]:
@@ -198,7 +224,8 @@ def find_inconsistencies(
     Returns {"results": [...], "total_flagged", "tiers",
     "year_playlist_name", "period_label", "period_plays", "only_added_in_period",
     "demotions_enabled", "year_check_enabled", "unranked_count",
-    "dismissed_hidden", "stale_dismissals"}. Each result is a song with at
+    "year_sections", "year_length", "meter_max", "dismissed_hidden",
+    "stale_dismissals"}. Each result is a song with at
     least one flag, strongest first, capped at MAX_RESULTS."""
     now = datetime.now(timezone.utc)
     now_ts = int(now.timestamp())
@@ -327,38 +354,68 @@ def find_inconsistencies(
         if len(song["tier_uris"]) > 1:
             names = ", ".join(tier_names[i] for i in sorted(song["tier_uris"]))
             song["flags"].append(
-                {"check": "multiple", "strength": 1, "text": f"In more than one ranking playlist: {names}"}
+                {"check": "multiple", "strength": 1, "points": 1, "chart": None,
+                 "text": f"In more than one ranking playlist: {names}"}
             )
             for i in sorted(song["tier_uris"]):
                 suggest_move(song, i)
 
-    # 1. Yearly order vs ranking playlists.
+    # 1. Yearly order vs ranking playlists. Fits only ever get worse going
+    # down the list, so each ranking's region is one unbroken section.
     fitted = _fit_year_order([s["tier"] for s in year_songs], len(tiers))
     region: dict[int, list[int]] = {}
     for song, fit in zip(year_songs, fitted):
         region.setdefault(fit, []).append(song["year_position"])
+    year_length = year_songs[-1]["year_position"] if year_songs else 0
+    year_sections = [
+        {"tier": tier, "name": tier_names[tier], "start": min(positions), "end": max(positions)}
+        for tier, positions in sorted(region.items())
+    ]
     for song, fit in zip(year_songs, fitted):
         position = song["year_position"]
+        chart = {"type": "strip", "position": position}
         if song["tier"] is None:
             song["flags"].append(
                 {
                     "check": "year_order",
                     "strength": 1,
+                    "points": 1,
+                    "chart": chart,
                     "text": f"Not in a ranking playlist. At #{position} in {year_name}, "
                     f"it sits among {tier_names[fit]} songs",
                 }
             )
             suggest_move(song, fit)
         elif fit != song["tier"]:
+            tiers_off = abs(fit - song["tier"])
+            own_region = region.get(song["tier"])
+            # How far past the edge of its own ranking's section it is.
+            if not own_region:
+                text = (
+                    f"At #{position} in {year_name}, it sits among {tier_names[fit]} songs - "
+                    f"no {tier_names[song['tier']]} songs are ranked there"
+                )
+                extra = 0
+            else:
+                above = fit < song["tier"]
+                edge = min(own_region) if above else max(own_region)
+                depth = abs(edge - position)
+                text = (
+                    f"At #{position} in {year_name} - {_plural(depth, 'place')} "
+                    f"{'above where' if above else 'below where'} the {tier_names[song['tier']]} section "
+                    f"{'starts' if above else 'ends'} (#{edge})"
+                )
+                extra = sum(1 for f in YEAR_DEPTH_FRACTIONS if depth >= f * year_length)
             song["flags"].append(
                 {
                     "check": "year_order",
-                    "strength": abs(fit - song["tier"]),
-                    "text": f"At #{position} in {year_name}, it sits among {tier_names[fit]} songs",
+                    "strength": tiers_off,
+                    "points": _points(tiers_off, extra),
+                    "chart": chart,
+                    "text": text,
                 }
             )
             suggest_move(song, fit)
-            own_region = region.get(song["tier"])
             if own_region:
                 song["reorder"].append(
                     f"To keep it in {tier_names[song['tier']]}, it fits around "
@@ -378,8 +435,8 @@ def find_inconsistencies(
         return "new" if song["first_ts"] >= start_ts else "returning"
 
     group_labels = {
-        "new": "songs you've played" if start_ts == 0 else "songs you first heard in the period",
-        "returning": "older songs you played in the period",
+        "new": "song you've played" if start_ts == 0 else "song you first heard in the period",
+        "returning": "song you'd heard before the period",
     }
     judged = [s for s in songs.values() if s["tier"] is not None and s["plays"] > 0 and old_enough(s)]
     group_plays: dict[tuple[str, int], list[int]] = {}
@@ -391,6 +448,15 @@ def find_inconsistencies(
     group_quartiles = {
         key: quantiles(plays, n=4) for key, plays in group_plays.items() if len(plays) >= MIN_GROUP_SONGS
     }
+    group_typical = {key: round(median(plays)) for key, plays in group_plays.items() if len(plays) >= MIN_GROUP_SONGS}
+
+    def plays_chart(song_group: str, plays: int, target: int) -> dict:
+        """The song's plays against a typical song from the suggested ranking."""
+        return {
+            "type": "plays",
+            "plays": plays,
+            "typical": {"name": tier_names[target], "plays": group_typical[(song_group, target)]},
+        }
 
     for song in judged:
         tier, plays, song_group = song["tier"], song["plays"], group(song)
@@ -400,14 +466,17 @@ def find_inconsistencies(
             while target > 0 and plays > group_quartiles.get((song_group, target - 1), [0, 0, float("inf")])[2]:
                 target -= 1
         if target < tier:
-            others = group_plays[(song_group, target)]
+            typical = group_typical[(song_group, target)]
+            far_past = plays >= PLAYS_FAR_PAST * group_quartiles[(song_group, target)][2]
             song["flags"].append(
                 {
                     "check": "plays",
                     "strength": tier - target,
-                    "text": f"{_plural(plays, 'play')} in the period - more than "
-                    f"{_percent(sum(1 for p in others if p < plays), len(others))}% of the "
-                    f"{tier_names[target]} {group_labels[song_group]}",
+                    "points": _points(tier - target, int(far_past)),
+                    "chart": plays_chart(song_group, plays, target),
+                    "text": f"{_plural(plays, 'play')} in the period - "
+                    + (f"{_times(plays / typical)} a typical " if typical else "a typical ")
+                    + f"{tier_names[target]} {group_labels[song_group]} ({typical})",
                 }
             )
             suggest_move(song, target)
@@ -419,14 +488,16 @@ def find_inconsistencies(
             ):
                 target += 1
             if target > tier:
-                others = group_plays[(song_group, target)]
+                typical = group_typical[(song_group, target)]
+                far_under = plays * PLAYS_FAR_PAST <= group_quartiles[(song_group, target)][0]
                 song["flags"].append(
                     {
                         "check": "plays",
                         "strength": target - tier,
-                        "text": f"{_plural(plays, 'play')} in the period - fewer than "
-                        f"{_percent(sum(1 for p in others if p > plays), len(others))}% of the "
-                        f"{tier_names[target]} {group_labels[song_group]}",
+                        "points": _points(target - tier, int(far_under)),
+                        "chart": plays_chart(song_group, plays, target),
+                        "text": f"{_plural(plays, 'play')} in the period - a typical "
+                        f"{tier_names[target]} {group_labels[song_group]} has {typical}",
                     }
                 )
                 suggest_move(song, target)
@@ -444,19 +515,19 @@ def find_inconsistencies(
             gap = ordinal - plays_rank
             if abs(gap) <= threshold:
                 continue
-            low = year_judged[max(0, plays_rank - 2)]["year_position"]
-            high = year_judged[min(len(year_judged) - 1, plays_rank + 2)]["year_position"]
+            # Where its plays would put it, as a position in the playlist.
+            plays_position = year_judged[plays_rank]["year_position"]
+            apart = abs(gap) / threshold
             song["flags"].append(
                 {
                     "check": "year_plays",
-                    "strength": abs(gap) / threshold,
-                    "text": f"Played {'more' if gap > 0 else 'less'} this year than its spot in {year_name} "
-                    f"suggests ({_plural(song['plays_ytd'], 'play')})",
+                    "strength": apart,
+                    "points": 1 if apart < 1.5 else 2 if apart < 2 else 3,
+                    "chart": {"type": "strip", "position": song["year_position"]},
+                    "text": f"#{song['year_position']} in {year_name}, but #{plays_position} by plays this year - "
+                    f"{_plural(abs(song['year_position'] - plays_position), 'place')} apart "
+                    f"({_plural(song['plays_ytd'], 'play')})",
                 }
-            )
-            song["reorder"].append(
-                f"By plays this year it fits around #{low}–{high} in {year_name} "
-                f"(currently #{song['year_position']})"
             )
 
     results = []
@@ -477,6 +548,7 @@ def find_inconsistencies(
             dismissed_hidden += 1
             continue
 
+        score = min(METER_MAX, sum(f["points"] for f in song["flags"]))
         moves = []
         if not song["is_local"]:
             for tier in song["move_tiers"]:
@@ -514,11 +586,16 @@ def find_inconsistencies(
                 "year_position": song["year_position"],
                 "plays": song["plays"],
                 "plays_ytd": song["plays_ytd"],
-                "flags": [{"check": f["check"], "text": f["text"]} for f in song["flags"]],
+                "flags": [
+                    {"check": f["check"], "text": f["text"], "points": f["points"], "chart": f["chart"]}
+                    for f in song["flags"]
+                ],
                 "moves": moves,
                 "reorder": song["reorder"],
                 "status": None,
-                "_sort": (-len(song["flags"]), -sum(f["strength"] for f in song["flags"]), -song["plays"]),
+                "score": score,
+                "strength_label": _strength_label(score),
+                "_sort": (-score, -len(song["flags"]), -sum(f["strength"] for f in song["flags"]), -song["plays"]),
             }
         )
 
@@ -538,6 +615,9 @@ def find_inconsistencies(
         "demotions_enabled": demotions_enabled,
         "year_check_enabled": year_check_enabled,
         "unranked_count": len(year_tracks) - ranked_count,
+        "year_sections": year_sections,
+        "year_length": year_length,
+        "meter_max": METER_MAX,
         "dismissed_hidden": dismissed_hidden,
         "stale_dismissals": stale_dismissals,
     }

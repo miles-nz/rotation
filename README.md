@@ -93,8 +93,11 @@ functions. Currently available:
   songs you came back to, since the two behave very differently. Songs at
   the bottom of the yearly playlist added in the last 30 days count as not
   ranked yet. The 100 strongest suggestions are listed, each with a
-  preview; move a song to the suggested ranking playlist with one click
-  (it's added to the bottom and taken out of its other ranking playlists),
+  strength meter (Mild, Moderate or Strong - it adds up how far past the
+  line each check is) and small charts showing where the song sits in the
+  yearly playlist and how its plays compare, plus a preview; move a song
+  to the suggested ranking playlist with one click (it's added to the
+  bottom and taken out of its other ranking playlists),
   or mark it as fine so it isn't flagged again for 6 months while it stays
   where it is.
   Reordering the yearly playlist is left to you. Requires Last.fm to be
