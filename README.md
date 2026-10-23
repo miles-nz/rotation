@@ -140,6 +140,14 @@ functions. Currently available:
   removals, so you can put tracks back later - all of them or just the
   ones you pick. Restored tracks go back in their original positions if
   the playlist hasn't changed since, otherwise at the end.
+- **Snapshots** - once a day (at `SNAPSHOT_HOUR` UTC, default 4), every
+  playlist you own plus Liked Songs is snapshotted if it's changed since
+  its last snapshot. Pick a snapshot to see what's been added and removed
+  since, put selected tracks back (at the end of the playlist, or re-liked),
+  or roll the whole playlist back to it after a confirmation screen. A
+  rollback snapshots the playlist first so it can be undone. Snapshots are
+  kept until 90 days after a newer one replaced them. Runs whether or not
+  the Cascade auto-scan is enabled.
 
 ## Setup
 
@@ -235,3 +243,5 @@ request (like Album Swap's suggestions) run without holding up the others.
    scheduler's "last ran" marker and any pending review are written there
    too, so a restart won't cause a duplicate notification or lose a review
    you haven't gotten to yet.
+   Playlist snapshots and their "last ran" marker live on the volume as
+   well, so they survive redeploys.

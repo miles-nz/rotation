@@ -1,0 +1,108 @@
+{% extends "base.html" %} {% block title %}Roll back {{ result.name }} -
+Rotation{% endblock %} {% block extra_style %}
+  .match .track-meta { flex-basis: 100%; }
+  .snapshot-status { color: var(--muted); font-size: 0.85rem; margin-left: auto; }
+{% endblock %} {% block content %} {% set snapshot = result.snapshot %}
+<h1>Roll back {{ result.name }}?</h1>
+<p>
+    To the snapshot from
+    <strong
+        ><time class="local-time" datetime="{{ snapshot.taken_at }}"
+            >{{ snapshot.taken_at[:16] | replace('T', ' ') }} UTC</time
+        ></strong
+    >.
+</p>
+
+{% if plan.unchanged %}
+<p>The playlist already matches this snapshot - there's nothing to roll back.</p>
+{% elif plan.blocked %}
+<p class="warning">
+    This rollback can't be done without losing local files. Spotify can't add
+    local files back to a playlist, and rolling back to this snapshot would
+    have to remove and re-add these:
+</p>
+{% for t in plan.blocked %}
+<div class="match"><span>{{ t.artists }} – {{ t.name }}</span></div>
+{% endfor %}
+<p class="hint">
+    You can still put back individual tracks from the comparison page.
+</p>
+{% else %}
+<ul>
+    {% if liked %}
+    <li>{{ plan.to_add | length }} song{{ 's' if plan.to_add | length != 1 else '' }} will be re-liked</li>
+    <li>{{ plan.to_remove | length }} song{{ 's' if plan.to_remove | length != 1 else '' }} will be unliked</li>
+    {% else %}
+    <li>{{ plan.to_add | length }} track{{ 's' if plan.to_add | length != 1 else '' }} will be added</li>
+    <li>{{ plan.to_remove | length }} track{{ 's' if plan.to_remove | length != 1 else '' }} will be removed</li>
+    {% if plan.moved %}
+    <li>{{ plan.moved }} other track{{ 's' if plan.moved != 1 else '' }} will be re-added to put {{ 'them' if plan.moved != 1 else 'it' }} back in the snapshot's order</li>
+    {% endif %} {% endif %}
+</ul>
+
+<p class="hint">
+    {% if liked %} Liked Songs are ordered by when you liked them, so there's
+    no order to restore. Re-liked songs show as liked today. {% elif
+    plan.method == 'replace' %} The playlist has been rearranged too much to
+    fix track by track, so its whole contents will be replaced: every track's
+    "date added" becomes today. {% else %} Tracks that are already in the
+    right place keep their "date added". Tracks that are added or re-added get
+    today instead. {% endif %} Before anything changes, the {{ 'songs' if
+    liked else 'playlist' }} as {{ 'they are' if liked else 'it is' }} now
+    will be saved as a snapshot, so you can undo this.
+</p>
+
+{% if plan.unrestorable %}
+<p class="warning">
+    {{ plan.unrestorable | length }} local file{{ 's' if plan.unrestorable |
+    length != 1 else '' }} in the snapshot can't be brought back - Spotify
+    can't add local files to a playlist:
+</p>
+{% for t in plan.unrestorable %}
+<div class="match"><span>{{ t.artists }} – {{ t.name }}</span></div>
+{% endfor %} {% endif %}
+
+<form
+    method="post"
+    action="{{ url_for('snapshot_rollback', playlist_id=result.playlist_id, snapshot_id=snapshot.id) }}"
+>
+    <input type="hidden" name="signature" value="{{ plan.current_signature }}" />
+    <p style="margin-top: 1.5rem">
+        <button class="button" type="submit">Roll back</button>
+        <a
+            class="button secondary"
+            href="{{ url_for('snapshot_compare_result', playlist_id=result.playlist_id, snapshot_id=snapshot.id) }}"
+            >Cancel</a
+        >
+    </p>
+</form>
+
+{% if plan.to_add %}
+<h2>{{ 'Re-liked' if liked else 'Added' }} ({{ plan.to_add | length }})</h2>
+{% for t in plan.to_add %}
+<div class="match">
+    <span>{{ t.artists }} – {{ t.name }}</span>
+    <span class="track-meta">{{ t.album }}</span>
+</div>
+{% endfor %} {% endif %} {% if plan.to_remove %}
+<h2>{{ 'Unliked' if liked else 'Removed' }} ({{ plan.to_remove | length }})</h2>
+{% for t in plan.to_remove %}
+<div class="match">
+    <span>{{ t.artists }} – {{ t.name }}</span>
+    {% if t.is_local %}
+    <span class="snapshot-status">local file - can't be added back later</span>
+    {% endif %}
+    <span class="track-meta">{{ t.album }}</span>
+</div>
+{% endfor %} {% endif %} {% endif %} {% if plan.unchanged or plan.blocked %}
+<p>
+    <a
+        class="button secondary"
+        href="{{ url_for('snapshot_compare_result', playlist_id=result.playlist_id, snapshot_id=snapshot.id) }}"
+        >Back</a
+    >
+</p>
+{% endif %}
+
+<script src="{{ url_for('static', filename='local_time.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,74 @@
+{% extends "base.html" %} {% block title %}Snapshots - Rotation{% endblock %} {%
+block content %} {% if result.kind == 'restore' %}
+<h1>Restored</h1>
+<p>
+    {% if result.restored %}{{ result.restored }} track{{ 's' if result.restored
+    != 1 else '' }} {{ 're-liked' if liked else 'added to the end of "' ~
+    result.name ~ '"' }}.{% else %}Nothing needed restoring.{% endif %}{% if
+    result.already_back %} {{ result.already_back }} {{ 'was' if
+    result.already_back == 1 else 'were' }} already back, so skipped.{% endif %}
+</p>
+{% if result.restored %}
+<p class="hint">
+    {{ 'Re-liked songs show as liked today.' if liked else 'Restored tracks
+    show today as their "date added".' }}
+</p>
+{% endif %} {% elif result.status == 'changed' %}
+<h1>Not rolled back</h1>
+<p>
+    "{{ result.name }}" changed after you reviewed the rollback, so nothing was
+    done. Take another look at what the rollback would do now.
+</p>
+<p>
+    <a
+        class="button"
+        href="{{ url_for('snapshot_compare', playlist_id=result.playlist_id, snapshot_id=result.snapshot.id) }}"
+        >Review again</a
+    >
+</p>
+{% elif result.status == 'blocked' %}
+<h1>Not rolled back</h1>
+<p class="warning">
+    "{{ result.name }}" now has local files that the rollback would have to
+    remove and re-add, and Spotify can't add local files back, so nothing was
+    done.
+</p>
+{% else %} {% set plan = result.plan %}
+<h1>Rolled back</h1>
+<p>
+    "{{ result.name }}" is back to the snapshot from
+    <time class="local-time" datetime="{{ result.snapshot.taken_at }}"
+        >{{ result.snapshot.taken_at[:16] | replace('T', ' ') }} UTC</time
+    >: {{ plan.to_add | length }} {{ 're-liked' if liked else 'added' }}, {{
+    plan.to_remove | length }} {{ 'unliked' if liked else 'removed' }}{% if
+    plan.moved %}, {{ plan.moved }} re-added to put them back in order{% endif
+    %}.
+</p>
+{% if result.matches == false %}
+<p class="warning">
+    The playlist doesn't exactly match the snapshot afterwards - something may
+    have changed it at the same time. Compare it with the snapshot again to
+    check.
+</p>
+{% endif %}
+<p class="hint">
+    To undo this, roll back to the snapshot taken just before it (<time
+        class="local-time"
+        datetime="{{ result.before.taken_at }}"
+        >{{ result.before.taken_at[:16] | replace('T', ' ') }} UTC</time
+    >).
+</p>
+<p>
+    <a
+        class="button secondary"
+        href="{{ url_for('snapshot_compare', playlist_id=result.playlist_id, snapshot_id=result.before.id) }}"
+        >Undo the rollback…</a
+    >
+</p>
+{% endif %}
+<p>
+    <a class="button" href="{{ url_for('snapshots_page') }}">Snapshots</a>
+    <a class="button secondary" href="{{ url_for('home') }}">Home</a>
+</p>
+<script src="{{ url_for('static', filename='local_time.js') }}"></script>
+{% endblock %}

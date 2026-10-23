@@ -1,0 +1,22 @@
+{% extends "base.html" %} {% block title %}Snapshots - Rotation{% endblock %} {%
+block content %}
+<h1>Snapshots taken</h1>
+<p>
+    Checked {{ result.checked }} playlist{{ 's' if result.checked != 1 else ''
+    }} (including Liked Songs). {% if result.new %}{{ result.new | length }}
+    {{ 'were' if result.new | length != 1 else 'was' }} snapshotted for the
+    first time.{% endif %} {% if result.changed %}{{ result.changed | length }}
+    had changed since {{ 'their' if result.changed | length != 1 else 'its' }}
+    last snapshot: {{ result.changed | join(', ') }}.{% elif not result.new
+    %}Nothing had changed since the last snapshots.{% endif %}{% if
+    result.pruned %} {{ result.pruned }} old snapshot{{ 's' if result.pruned !=
+    1 else '' }} deleted.{% endif %}
+</p>
+{% if result.failed %}
+<p class="warning">
+    Couldn't read: {{ result.failed | join(', ') }}. They'll be tried again on
+    the next run.
+</p>
+{% endif %}
+<p><a class="button" href="{{ url_for('snapshots_page') }}">Snapshots</a></p>
+{% endblock %}

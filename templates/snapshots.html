@@ -1,0 +1,66 @@
+{% extends "base.html" %} {% block title %}Snapshots - Rotation{% endblock %}
+{% block extra_style %}
+  .snapshot-playlist { border: 1px solid var(--border); border-radius: 8px; margin: 0.75rem 0; }
+  .snapshot-playlist > summary { cursor: pointer; padding: 0.75rem 1rem; list-style-position: inside; }
+  .snapshot-playlist > summary .track-meta { display: block; margin-top: 0.2rem; }
+  .snapshot-list { list-style: none; margin: 0; padding: 0 1rem 1rem; }
+  .snapshot-list li { display: flex; align-items: baseline; gap: 0.5rem; padding: 0.4rem 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .snapshot-tag { color: var(--muted); font-size: 0.85rem; margin-left: auto; }
+{% endblock %} {% block content %}
+<h1>Snapshots</h1>
+<p class="hint">
+    Every playlist you own plus Liked Songs is checked once a day at {{ "%02d"
+    | format(hour) }}:00 UTC, and a snapshot is saved only when something has
+    changed. A snapshot is kept until {{ retention_days }} days after a newer
+    one replaced it, and the latest one is always kept. Pick a snapshot to see
+    what's changed since, put tracks back, or roll the playlist back to it.
+</p>
+
+<form method="post" action="{{ url_for('snapshots_run') }}">
+    <p>
+        {% if last_run %} Last daily run:
+        <time class="local-time" datetime="{{ last_run.at }}"
+            >{{ last_run.at[:16] | replace('T', ' ') }} UTC</time
+        >. {% else %} The daily run hasn't happened yet. {% endif %}
+        <button class="button secondary" type="submit">Snapshot now</button>
+    </p>
+</form>
+
+{% if not playlists %}
+<p>No snapshots yet.</p>
+{% endif %} {% for p in playlists %}
+<details class="snapshot-playlist">
+    <summary>
+        <strong>{{ p.name }}</strong>
+        <span class="track-meta">
+            {{ p.snapshots | length }} snapshot{{ 's' if p.snapshots | length !=
+            1 else '' }}, latest
+            <time class="local-time" datetime="{{ p.snapshots[0].taken_at }}"
+                >{{ p.snapshots[0].taken_at[:16] | replace('T', ' ') }}
+                UTC</time
+            >
+        </span>
+    </summary>
+    <ul class="snapshot-list">
+        {% for s in p.snapshots %}
+        <li>
+            <a href="{{ url_for('snapshot_compare', playlist_id=p.id, snapshot_id=s.id) }}"
+                ><time class="local-time" datetime="{{ s.taken_at }}"
+                    >{{ s.taken_at[:16] | replace('T', ' ') }} UTC</time
+                ></a
+            >
+            <span class="track-meta"
+                >{{ s.track_count }} track{{ 's' if s.track_count != 1 else ''
+                }}</span
+            >
+            {% if s.reason == 'pre_rollback' %}
+            <span class="snapshot-tag">before a rollback</span>
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+</details>
+{% endfor %}
+
+<script src="{{ url_for('static', filename='local_time.js') }}"></script>
+{% endblock %}

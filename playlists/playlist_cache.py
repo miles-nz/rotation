@@ -241,10 +241,12 @@ def track_details_for_uris(sp: Spotify, uris) -> dict[str, dict]:
     return details
 
 
-def _fetch_liked_track_uris(
+def _fetch_liked_tracks(
     sp: Spotify, total: int, cancel_check: CancelCheck | None
-) -> set[str]:
-    uris: set[str] = set()
+) -> list[dict]:
+    """Every Liked Song as a full track dict, newest-liked first (the
+    order Spotify returns them in)."""
+    tracks: list[dict] = []
     processed = 0
     results = sp.current_user_saved_tracks(limit=50)
     while results:
@@ -252,7 +254,24 @@ def _fetch_liked_track_uris(
             processed += 1
             track = item.get("track")
             if track and track.get("uri"):
-                uris.add(track["uri"])
+                artists = track.get("artists") or []
+                tracks.append(
+                    {
+                        "uri": track["uri"],
+                        "name": track["name"],
+                        "artists": ", ".join(a["name"] for a in artists),
+                        "artist_id": artists[0]["id"] if artists else None,
+                        "album": (track.get("album") or {}).get("name") or "",
+                        "is_local": bool(track.get("is_local")),
+                        "explicit": bool(track.get("explicit")),
+                        "popularity": track.get("popularity"),
+                        "duration_ms": track.get("duration_ms"),
+                        "release_year": _parse_year(
+                            (track.get("album") or {}).get("release_date")
+                        ),
+                        "added_at": item.get("added_at"),
+                    }
+                )
         logger.info(
             "liked songs: %d/%d tracks fetched",
             processed,
@@ -268,7 +287,7 @@ def _fetch_liked_track_uris(
         )
         check_cancelled(cancel_check)
         results = sp.next(results) if results.get("next") else None
-    return uris
+    return tracks
 
 
 def _liked_cache_path() -> Path:
@@ -303,9 +322,23 @@ def get_liked_songs(sp: Spotify, cancel_check: CancelCheck | None = None) -> set
         logger.info("liked songs: count unchanged (%d), using cached set", total)
         return set(cached["uris"])
     logger.info("fetching liked songs")
-    uris = _fetch_liked_track_uris(sp, total, cancel_check)
+    uris = {t["uri"] for t in _fetch_liked_tracks(sp, total, cancel_check)}
     _save_liked_cache(uris)
     return uris
+
+
+def get_liked_songs_tracks(
+    sp: Spotify, cancel_check: CancelCheck | None = None
+) -> list[dict]:
+    """Full track dicts for every Liked Song, always freshly fetched - the
+    count-based shortcut get_liked_songs uses isn't good enough for callers
+    that need to see exactly what changed (Snapshots). Refreshes the uri
+    cache on the way, since it's had a full read anyway."""
+    total = sp.current_user_saved_tracks(limit=1)["total"]
+    logger.info("fetching liked songs")
+    tracks = _fetch_liked_tracks(sp, total, cancel_check)
+    _save_liked_cache(t["uri"] for t in tracks)
+    return tracks
 
 
 def refresh_liked_songs_after_mutation(to_add, to_remove) -> None:

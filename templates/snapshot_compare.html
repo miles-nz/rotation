@@ -1,0 +1,103 @@
+{% extends "base.html" %} {% block title %}{{ result.name }} - Snapshots -
+Rotation{% endblock %} {% block extra_style %}
+  .match .track-meta { flex-basis: 100%; margin-left: 1.6rem; }
+  .snapshot-status { color: var(--muted); font-size: 0.85rem; margin-left: auto; }
+{% endblock %} {% block content %} {% set snapshot = result.snapshot %} {% set
+restorable = result.removed | rejectattr('is_local') | list %}
+<h1>{{ result.name }}</h1>
+<p>
+    Snapshot from
+    <strong
+        ><time class="local-time" datetime="{{ snapshot.taken_at }}"
+            >{{ snapshot.taken_at[:16] | replace('T', ' ') }} UTC</time
+        ></strong
+    >{% if snapshot.reason == 'pre_rollback' %}, taken just before a
+    rollback{% endif %}: {{ snapshot.tracks | length }} track{{ 's' if
+    snapshot.tracks | length != 1 else '' }}. It has {{ result.current_tracks
+    | length }} now.
+</p>
+
+{% if not result.added and not result.removed %}
+<p>
+    {% if same_order or liked %}Nothing has changed since this snapshot.{% else
+    %}Same tracks as the snapshot, but in a different order.{% endif %}
+</p>
+{% endif %} {% if result.removed %}
+<h2>Removed since ({{ result.removed | length }})</h2>
+<form
+    method="post"
+    action="{{ url_for('snapshot_restore', playlist_id=result.playlist_id, snapshot_id=snapshot.id) }}"
+>
+    {% for t in result.removed %}
+    <label class="match">
+        {% if t.is_local %}
+        <input type="checkbox" disabled />
+        {% else %}
+        <input type="checkbox" name="track" value="{{ t.index }}" />
+        {% endif %}
+        <span>{{ t.artists }} – {{ t.name }}</span>
+        {% if t.is_local %}
+        <span class="snapshot-status">local file - can't restore</span>
+        {% endif %}
+        <span class="track-meta"
+            >{{ t.album }}{% if t.added_at %} · added {{ t.added_at[:10] }}{%
+            endif %}</span
+        >
+    </label>
+    {% endfor %} {% if restorable %}
+    <p style="margin-top: 1rem">
+        <button class="button" type="submit">
+            {{ 'Re-like selected' if liked else 'Restore selected' }}
+        </button>
+        <button class="button secondary" type="button" id="select-all">
+            Select all
+        </button>
+    </p>
+    <p class="hint">
+        {% if liked %}Re-liked songs show as liked today.{% else %}Restored
+        tracks go at the end of the playlist, with today as their "date
+        added".{% endif %}
+    </p>
+    {% endif %}
+</form>
+{% endif %} {% if result.added %}
+<h2>Added since ({{ result.added | length }})</h2>
+{% for t in result.added %}
+<div class="match">
+    <span>{{ t.artists }} – {{ t.name }}</span>
+    {% if t.is_local %}<span class="snapshot-status">local file</span>{% endif
+    %}
+    <span class="track-meta"
+        >{{ t.album }}{% if t.added_at %} · added {{ t.added_at[:10] }}{% endif
+        %}</span
+    >
+</div>
+{% endfor %} {% endif %}
+
+<p style="margin-top: 1.5rem">
+    {% if not same_order and (result.added or result.removed or not liked) %}
+    <a
+        class="button"
+        href="{{ url_for('snapshot_rollback_confirm', playlist_id=result.playlist_id, snapshot_id=snapshot.id) }}"
+        >Roll back to this snapshot…</a
+    >
+    {% endif %}
+    <a class="button secondary" href="{{ url_for('snapshots_page') }}"
+        >Snapshots</a
+    >
+</p>
+
+<script src="{{ url_for('static', filename='local_time.js') }}"></script>
+<script>
+    (function () {
+        const button = document.getElementById("select-all");
+        if (!button) return;
+        const boxes = document.querySelectorAll('input[name="track"]');
+        button.addEventListener("click", () => {
+            const allChecked = Array.from(boxes).every((b) => b.checked);
+            boxes.forEach((b) => (b.checked = !allChecked));
+            button.textContent = allChecked ? "Select all" : "Select none";
+        });
+    })();
+</script>
+{% endblock %}

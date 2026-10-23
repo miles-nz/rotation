@@ -13,6 +13,7 @@ from spotipy.cache_handler import MemoryCacheHandler
 
 from core.background_job import BackgroundJob
 import core.cascade_scheduler as cascade_scheduler
+import core.snapshot_scheduler as snapshot_scheduler
 from core.paths import DATA_DIR
 from spotify.spotify_client import make_oauth, get_authenticated_client, save_token
 from core.sync import apply_diff, get_target_diff
@@ -29,6 +30,7 @@ import playlists.playlist_swap as playlist_swap_module
 import playlists.ranking_check as ranking_check_module
 import playlists.ranking_dismissals as ranking_dismissals_module
 import playlists.removal_history as removal_history_module
+import playlists.snapshots as snapshots_module
 import lastfm.forgotten_favourites as forgotten_favourites_module
 import lastfm.lastfm_client as lastfm_client_module
 import lastfm.most_played as most_played_module
@@ -122,6 +124,7 @@ def _default_cascade_steps(sp):
 
 app = Flask(__name__)
 
+
 def _load_secret_key() -> str:
     """Signs the session cookie that proves a browser logged in as the
     owner. SECRET_KEY wins if set; otherwise one is generated once and kept
@@ -196,6 +199,7 @@ _visuals_job = BackgroundJob(
         "app",
     ]
 )
+_snapshot_job = BackgroundJob(["playlists.snapshots", "playlists.playlist_cache", "core.sync", "app"])
 _cascade_run: cascade_module.CascadeRun | None = None
 
 # Gunicorn imports this file as the "app" module (not "__main__"), so it
@@ -206,6 +210,7 @@ _cascade_run: cascade_module.CascadeRun | None = None
 # watcher process, to avoid a duplicate scheduler.
 if __name__ != "__main__" or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
     cascade_scheduler.start_scheduler(_default_cascade_steps)
+    snapshot_scheduler.start_scheduler()
 
 
 def _credentials_configured() -> bool:
@@ -1200,6 +1205,239 @@ def removal_history_restore(entry_id: str):
 
     summary = removal_history_module.restore(sp, entry_id, keys)
     return render_template("removal_history_restored.html", summary=summary)
+
+
+# --- Snapshots -------------------------------------------------------------
+# Daily copies of every playlist you own plus Liked Songs (see
+# core/snapshot_scheduler.py), to see what's changed since and put tracks -
+# or a whole playlist - back. One background job runs the read-only
+# compare/"Snapshot now" work and the restore/rollback writes; its result is
+# tagged with "kind" so each result page only picks up its own.
+
+
+def _run_take_snapshots():
+    def target(cancel_check):
+        sp = get_authenticated_client()
+        return {"kind": "run", **snapshots_module.take_snapshots(sp, cancel_check)}
+
+    return target
+
+
+def _run_snapshot_compare(playlist_id: str, snapshot_id: str):
+    def target(cancel_check):
+        sp = get_authenticated_client()
+        return {"kind": "compare", **snapshots_module.compare(sp, playlist_id, snapshot_id, cancel_check)}
+
+    return target
+
+
+def _run_snapshot_restore(playlist_id: str, snapshot_id: str, indices: set[int]):
+    def target(cancel_check):
+        sp = get_authenticated_client()
+        return {"kind": "restore", **snapshots_module.restore(sp, playlist_id, snapshot_id, indices)}
+
+    return target
+
+
+def _run_snapshot_rollback(playlist_id: str, snapshot_id: str, signature: str):
+    def target(cancel_check):
+        sp = get_authenticated_client()
+        return {"kind": "rollback", **snapshots_module.rollback(sp, playlist_id, snapshot_id, signature)}
+
+    return target
+
+
+def _snapshot_job_result(kind: str, playlist_id: str | None = None, snapshot_id: str | None = None):
+    result = _snapshot_job.result
+    if not result or result.get("kind") != kind:
+        return None
+    if playlist_id is not None and result.get("playlist_id") != playlist_id:
+        return None
+    if snapshot_id is not None and result["snapshot"]["id"] != snapshot_id:
+        return None
+    return result
+
+
+def _snapshot_progress(heading: str, description: str, result_url: str):
+    return render_template(
+        "progress.html",
+        status_url=url_for("snapshots_job_status"),
+        cancel_url=url_for("snapshots_job_cancel"),
+        result_url=result_url,
+        back_url=url_for("snapshots_page"),
+        heading=heading,
+        description=description,
+    )
+
+
+@app.route("/snapshots")
+def snapshots_page():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    return render_template(
+        "snapshots.html",
+        playlists=snapshots_module.list_playlists(),
+        last_run=snapshot_scheduler.read_last_run(),
+        hour=snapshot_scheduler.configured_hour(),
+        retention_days=snapshots_module.RETENTION_DAYS,
+    )
+
+
+@app.route("/snapshots/job/status")
+def snapshots_job_status():
+    return jsonify(_snapshot_job.status())
+
+
+@app.route("/snapshots/job/cancel", methods=["POST"])
+def snapshots_job_cancel():
+    _snapshot_job.cancel()
+    return jsonify({"ok": True})
+
+
+@app.route("/snapshots/run", methods=["POST"])
+def snapshots_run():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    _snapshot_job.start(_run_take_snapshots())
+    return _snapshot_progress(
+        "Taking snapshots…",
+        "Checking every playlist you own plus Liked Songs, and saving a snapshot of any that changed.",
+        url_for("snapshots_run_result"),
+    )
+
+
+@app.route("/snapshots/run/result")
+def snapshots_run_result():
+    result = _snapshot_job_result("run")
+    if result is None:
+        return redirect(url_for("snapshots_page"))
+    return render_template("snapshots_run_done.html", result=result)
+
+
+@app.route("/snapshots/<playlist_id>/<snapshot_id>")
+def snapshot_compare(playlist_id: str, snapshot_id: str):
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    if snapshots_module.load_snapshot(playlist_id, snapshot_id) is None:
+        return redirect(url_for("snapshots_page"))
+
+    _snapshot_job.start(_run_snapshot_compare(playlist_id, snapshot_id))
+    return _snapshot_progress(
+        "Comparing with now…",
+        "Reading the playlist as it is now to see what's changed since the snapshot.",
+        url_for("snapshot_compare_result", playlist_id=playlist_id, snapshot_id=snapshot_id),
+    )
+
+
+@app.route("/snapshots/<playlist_id>/<snapshot_id>/compare")
+def snapshot_compare_result(playlist_id: str, snapshot_id: str):
+    result = _snapshot_job_result("compare", playlist_id, snapshot_id)
+    if result is None:
+        return redirect(url_for("snapshot_compare", playlist_id=playlist_id, snapshot_id=snapshot_id))
+
+    return render_template(
+        "snapshot_compare.html",
+        result=result,
+        liked=playlist_id == snapshots_module.LIKED_SONGS_ID,
+        same_order=[t["uri"] for t in result["snapshot"]["tracks"]]
+        == [t["uri"] for t in result["current_tracks"]],
+    )
+
+
+@app.route("/snapshots/<playlist_id>/<snapshot_id>/restore", methods=["POST"])
+def snapshot_restore(playlist_id: str, snapshot_id: str):
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    indices = {int(i) for i in request.form.getlist("track") if i.isdigit()}
+    if not indices or snapshots_module.load_snapshot(playlist_id, snapshot_id) is None:
+        return redirect(url_for("snapshot_compare_result", playlist_id=playlist_id, snapshot_id=snapshot_id))
+
+    _snapshot_job.start(_run_snapshot_restore(playlist_id, snapshot_id, indices))
+    return _snapshot_progress(
+        "Restoring tracks…",
+        "Checking which of the selected tracks are still missing and adding them back.",
+        url_for("snapshot_applied"),
+    )
+
+
+@app.route("/snapshots/<playlist_id>/<snapshot_id>/rollback")
+def snapshot_rollback_confirm(playlist_id: str, snapshot_id: str):
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    # The plan is worked out from the comparison just shown, so there's no
+    # second read of the playlist here; applying it re-reads and checks
+    # nothing's changed in between.
+    result = _snapshot_job_result("compare", playlist_id, snapshot_id)
+    if result is None:
+        return redirect(url_for("snapshot_compare", playlist_id=playlist_id, snapshot_id=snapshot_id))
+
+    plan = snapshots_module.plan_rollback(
+        playlist_id, result["snapshot"]["tracks"], result["current_tracks"]
+    )
+    return render_template(
+        "snapshot_rollback.html",
+        result=result,
+        plan=plan,
+        liked=playlist_id == snapshots_module.LIKED_SONGS_ID,
+    )
+
+
+@app.route("/snapshots/<playlist_id>/<snapshot_id>/rollback", methods=["POST"])
+def snapshot_rollback(playlist_id: str, snapshot_id: str):
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    signature = request.form.get("signature", "")
+    if not signature or snapshots_module.load_snapshot(playlist_id, snapshot_id) is None:
+        return redirect(url_for("snapshots_page"))
+
+    _snapshot_job.start(_run_snapshot_rollback(playlist_id, snapshot_id, signature))
+    return _snapshot_progress(
+        "Rolling back…",
+        "Saving a snapshot of the playlist as it is now, then rolling it back. Don't close this page.",
+        url_for("snapshot_applied"),
+    )
+
+
+@app.route("/snapshots/applied")
+def snapshot_applied():
+    result = _snapshot_job_result("restore") or _snapshot_job_result("rollback")
+    if result is None:
+        return redirect(url_for("snapshots_page"))
+    return render_template(
+        "snapshot_applied.html",
+        result=result,
+        liked=result["playlist_id"] == snapshots_module.LIKED_SONGS_ID,
+    )
 
 
 # --- Playlist Diff -------------------------------------------------------
