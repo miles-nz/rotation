@@ -26,6 +26,10 @@
             Edit
         </button>
     </p>
+    <p class="default-note">
+        <span id="default-note"></span>
+        <a href="#" id="clear-default-link">Clear default</a>
+    </p>
 </div>
 
 <div id="picker-view" style="display: none">
@@ -55,7 +59,10 @@
     <p id="picker-loading"><span class="spinner"></span>Loading playlists…</p>
     <p class="warning" id="picker-error" style="display: none"></p>
     <p>
-        <button class="button" id="save-btn" type="button">Save</button>
+        <button class="button" id="save-btn" type="button">Use these</button>
+        <button class="button secondary" id="save-default-btn" type="button">
+            Save as default
+        </button>
         <button
             class="button secondary"
             id="cancel-btn"
@@ -68,6 +75,7 @@
 </div>
 
 <script src="{{ url_for('static', filename='playlist_picker.js') }}"></script>
+<script src="{{ url_for('static', filename='saved_defaults.js') }}"></script>
 <script src="{{ url_for('static', filename='criteria_builder.js') }}"></script>
 <script>
     let currentSaved = {{ default_prefs | tojson }};
@@ -158,14 +166,14 @@
         if (saved) showConfigured(saved);
     });
 
-    document.getElementById("save-btn").addEventListener("click", () => {
+    function collectSelection() {
         const errorEl = document.getElementById("picker-error");
         const playlistValue = playlistCombo.getValue();
 
         if (!playlistValue.id) {
             errorEl.textContent = "Pick a playlist.";
             errorEl.style.display = "block";
-            return;
+            return null;
         }
 
         let field, operator, value, value2;
@@ -174,7 +182,7 @@
         } catch (e) {
             errorEl.textContent = e.message;
             errorEl.style.display = "block";
-            return;
+            return null;
         }
 
         errorEl.style.display = "none";
@@ -187,8 +195,17 @@
             value,
             value2,
         };
-        currentSaved = saved;
-        showConfigured(saved);
+        return saved;
+    }
+
+    setupDefaultControls({
+        url: "{{ url_for('save_default', tool='playlist_cleanup') }}",
+        hasStored: getSaved() !== null,
+        collect: collectSelection,
+        apply: (selection) => {
+            currentSaved = selection;
+            showConfigured(selection);
+        },
     });
 
     const saved = getSaved();

@@ -57,6 +57,7 @@ a.button, button.button {
 a.button.secondary, button.button.secondary { background: var(--secondary-bg); color: var(--secondary-text); }
 button.button:disabled { cursor: default; opacity: 0.6; }
 .warning { color: var(--warning); }
+.default-note { color: var(--muted); font-size: 0.9rem; }
 .hint { color: var(--muted); }
 .nav { margin-bottom: 1.5rem; }
 .nav a { color: var(--muted); text-decoration: none; font-size: 0.9rem; }

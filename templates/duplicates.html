@@ -26,6 +26,10 @@
             Edit playlists
         </button>
     </p>
+    <p class="default-note">
+        <span id="default-note"></span>
+        <a href="#" id="clear-default-link">Clear default</a>
+    </p>
 </div>
 
 <div id="picker-view" style="display: none">
@@ -41,7 +45,10 @@
     </div>
     <p class="warning" id="picker-error" style="display: none"></p>
     <p>
-        <button class="button" id="save-btn" type="button">Save</button>
+        <button class="button" id="save-btn" type="button">Use these</button>
+        <button class="button secondary" id="save-default-btn" type="button">
+            Save as default
+        </button>
         <button
             class="button secondary"
             id="cancel-btn"
@@ -54,6 +61,7 @@
 </div>
 
 <script src="{{ url_for('static', filename='playlist_picker.js') }}"></script>
+<script src="{{ url_for('static', filename='saved_defaults.js') }}"></script>
 <script>
     let currentSaved = {{ default_prefs | tojson }};
 
@@ -134,7 +142,7 @@
         if (saved) showConfigured(saved);
     });
 
-    document.getElementById("save-btn").addEventListener("click", () => {
+    function collectSelection() {
         const values = rowManager.getValues();
         const errorEl = document.getElementById("picker-error");
 
@@ -142,20 +150,29 @@
             errorEl.textContent =
                 "Pick a playlist for every slot (or remove empty ones).";
             errorEl.style.display = "block";
-            return;
+            return null;
         }
         const ids = values.map((v) => v.id);
         if (new Set(ids).size !== ids.length) {
             errorEl.textContent =
                 "Pick different playlists - no duplicates in the list itself.";
             errorEl.style.display = "block";
-            return;
+            return null;
         }
         errorEl.style.display = "none";
 
         const saved = values.map((v) => ({ id: v.id, name: v.name }));
-        currentSaved = saved;
-        showConfigured(saved);
+        return saved;
+    }
+
+    setupDefaultControls({
+        url: "{{ url_for('save_default', tool='duplicates') }}",
+        hasStored: getSaved() !== null,
+        collect: collectSelection,
+        apply: (selection) => {
+            currentSaved = selection;
+            showConfigured(selection);
+        },
     });
 
     const saved = getSaved();

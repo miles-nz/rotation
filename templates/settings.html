@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Settings - Rotation{% endblock %}
+{% macro hour_select(name, selected) -%}
+<select name="{{ name }}" class="hour-select">
+    {% for h in range(24) %}
+    <option value="{{ h }}" {% if h == selected %}selected{% endif %}>{{ "%02d" | format(h) }}:00 UTC</option>
+    {% endfor %}
+</select>
+{%- endmacro %}
+{% block content %}
+<h1>Settings</h1>
+
+{% if saved %}<p>Saved.</p>{% endif %}
+{% if error %}<p class="warning">{{ error }}</p>{% endif %}
+
+<form method="post" action="{{ url_for('settings_page') }}">
+    <h2>Daily Cascade scan</h2>
+    <p>
+        Runs your default Cascade steps as a read-only scan and lets you know if
+        there's anything to review. It never applies changes.
+    </p>
+    {% if not has_cascade_default %}
+    <p class="warning">
+        There's no default Cascade yet, so the scan has nothing to run. Save one
+        from the <a href="{{ url_for('cascade_picker') }}">Cascade</a> page.
+    </p>
+    {% endif %}
+    <p>
+        <label>
+            <input type="checkbox" name="cascade_auto_enabled" {% if cascade.enabled %}checked{% endif %}>
+            Run the scan automatically
+        </label>
+    </p>
+    <p>
+        <label>
+            <input type="radio" name="cascade_schedule_mode" value="daily" {% if not cascade.schedule %}checked{% endif %}>
+            Every day at
+        </label>
+        {{ hour_select("cascade_auto_hour", cascade.hour) }}
+    </p>
+    <p>
+        <label>
+            <input type="radio" name="cascade_schedule_mode" value="days" {% if cascade.schedule %}checked{% endif %}>
+            Only on these days:
+        </label>
+    </p>
+    <ul id="day-list" style="list-style: none; padding-left: 1.5rem">
+        {% for d in cascade.days %}
+        <li>
+            <label>
+                <input type="checkbox" name="day_{{ d }}" {% if d in cascade.schedule %}checked{% endif %}>
+                {{ d | capitalize }}
+            </label>
+            at {{ hour_select("day_hour_" ~ d, cascade.schedule.get(d, cascade.hour)) }}
+        </li>
+        {% endfor %}
+    </ul>
+
+    <h2>Daily playlist snapshot</h2>
+    <p>Snapshots always run, whether or not the Cascade scan is on.</p>
+    <p>Run at {{ hour_select("snapshot_hour", snapshot_hour) }}</p>
+
+    <p><button class="button" type="submit">Save</button></p>
+</form>
+
+<script>
+    // Hours are stored in UTC; add each one's local time to its label.
+    for (const opt of document.querySelectorAll(".hour-select option")) {
+        const d = new Date();
+        d.setUTCHours(Number(opt.value), 0, 0, 0);
+        const local = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+        opt.textContent += " (" + local + " your time)";
+    }
+</script>
+{% endblock %}

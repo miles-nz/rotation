@@ -16,6 +16,7 @@ import certifi
 from spotipy import Spotify
 
 from core.paths import DATA_DIR
+import core.settings_store as settings_store
 from spotify.spotify_client import get_authenticated_client
 import playlists.cascade as cascade_module
 
@@ -35,13 +36,21 @@ _scheduler_lock = threading.Lock()
 _scheduler_started = False
 
 
+# Each setting below is read from settings.json (set on the app's Settings
+# page) first, falling back to its env var if it was never set there.
+
+
 def _auto_enabled() -> bool:
-    return os.environ.get("CASCADE_AUTO_ENABLED", "").strip().lower() in {"1", "true", "yes"}
+    return settings_store.get(
+        "cascade_auto_enabled",
+        lambda: os.environ.get("CASCADE_AUTO_ENABLED", "").strip().lower() in {"1", "true", "yes"},
+    )
 
 
 def _configured_hour() -> int:
+    stored = settings_store.get("cascade_auto_hour")
     try:
-        hour = int(os.environ.get("CASCADE_AUTO_HOUR", str(DEFAULT_AUTO_HOUR)))
+        hour = int(stored if stored is not None else os.environ.get("CASCADE_AUTO_HOUR", str(DEFAULT_AUTO_HOUR)))
     except ValueError:
         hour = DEFAULT_AUTO_HOUR
     return max(0, min(23, hour))
@@ -52,14 +61,20 @@ def _configured_schedule() -> dict[int, int]:
     into {weekday_int: hour_utc}. Days not listed don't run at all. Returns
     {} if unset/invalid, meaning "fall back to CASCADE_AUTO_HOUR every day"
     (see _target_hour_for)."""
-    raw = os.environ.get("CASCADE_AUTO_SCHEDULE", "").strip()
-    if not raw:
-        return {}
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        logger.warning("cascade auto-scan: invalid JSON in CASCADE_AUTO_SCHEDULE, ignoring")
-        return {}
+    parsed = settings_store.get("cascade_auto_schedule")
+    if parsed is None:
+        raw = os.environ.get("CASCADE_AUTO_SCHEDULE", "").strip()
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.warning("cascade auto-scan: invalid JSON in CASCADE_AUTO_SCHEDULE, ignoring")
+            return {}
+    return _parse_schedule(parsed)
+
+
+def _parse_schedule(parsed) -> dict[int, int]:
     if not isinstance(parsed, dict):
         logger.warning("cascade auto-scan: CASCADE_AUTO_SCHEDULE must be a JSON object, ignoring")
         return {}
@@ -86,6 +101,42 @@ def _target_hour_for(weekday: int) -> int | None:
     if schedule:
         return schedule.get(weekday)
     return _configured_hour()
+
+
+def env_settings() -> dict:
+    """The auto-scan settings that are set via env vars (only those
+    actually set, and valid), in settings.json's shape - for the one-time
+    copy into it at startup."""
+    out: dict = {}
+    enabled = os.environ.get("CASCADE_AUTO_ENABLED", "").strip()
+    if enabled:
+        out["cascade_auto_enabled"] = enabled.lower() in {"1", "true", "yes"}
+    hour = os.environ.get("CASCADE_AUTO_HOUR", "").strip()
+    if hour:
+        try:
+            out["cascade_auto_hour"] = max(0, min(23, int(hour)))
+        except ValueError:
+            pass
+    raw_schedule = os.environ.get("CASCADE_AUTO_SCHEDULE", "").strip()
+    if raw_schedule:
+        try:
+            schedule = _parse_schedule(json.loads(raw_schedule))
+        except json.JSONDecodeError:
+            schedule = {}
+        if schedule:
+            out["cascade_auto_schedule"] = {_DAY_KEYS[d]: h for d, h in schedule.items()}
+    return out
+
+
+def schedule_settings() -> dict:
+    """The auto-scan settings currently in effect, for the Settings page.
+    schedule is {"mon": 9, ...} - empty means every day at hour."""
+    return {
+        "enabled": _auto_enabled(),
+        "hour": _configured_hour(),
+        "schedule": {_DAY_KEYS[d]: h for d, h in _configured_schedule().items()},
+        "days": _DAY_KEYS,
+    }
 
 
 def _webhook_url() -> str:

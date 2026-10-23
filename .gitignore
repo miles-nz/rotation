@@ -17,3 +17,6 @@ ranking_dismissals.json
 snapshots/
 snapshots_last_run.json
 .flask_secret_key
+settings.json
+settings.json.tmp
+settings.json.unreadable

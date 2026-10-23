@@ -17,6 +17,24 @@ block content %}
 {% elif not logged_in %}
 <p><a class="button" href="{{ url_for('login') }}">Log in with Spotify</a></p>
 {% else %}
+<div id="configured-view" style="display: none">
+    <p>Your default Cascade runs these steps in order:</p>
+    <ol id="configured-steps"></ol>
+    <p>
+        <button class="button" type="submit" form="default-cascade-form" id="start-default-btn">
+            Start Cascade
+        </button>
+        <button class="button secondary" id="edit-btn" type="button">Edit steps</button>
+    </p>
+    <p class="default-note">
+        Each step uses the playlists saved as that function's own default - change
+        those on the function's page.
+        <a href="#" id="clear-default-link">Clear default</a>
+    </p>
+</div>
+<form id="default-cascade-form" method="post" action="{{ url_for('cascade_start_default') }}"></form>
+
+<div id="builder-view" style="display: none">
 <p><strong>Add a step</strong> (each function can be used once):</p>
 <div class="cascade-palette" id="palette"></div>
 
@@ -29,12 +47,25 @@ block content %}
     <button class="button" type="button" id="start-btn" disabled>
         Start Cascade
     </button>
+    <button class="button secondary" type="button" id="save-default-btn" disabled>
+        Save as default
+    </button>
 </form>
+<p class="default-note" id="save-default-note">
+    Saving as default keeps which steps run and in what order. Each step's
+    playlists come from that function's own default.
+</p>
+</div>
 
 <script src="{{ url_for('static', filename='playlist_picker.js') }}"></script>
 <script src="{{ url_for('static', filename='criteria_builder.js') }}"></script>
+<script src="{{ url_for('static', filename='saved_defaults.js') }}"></script>
 <script>
+    // DEFAULT_CASCADE_TYPES is the saved step order; DEFAULT_CASCADE is
+    // each of those steps expanded with its tool's default (steps whose tool
+    // has no default are missing from it, and get skipped).
     const DEFAULT_CASCADE = {{ default_cascade | tojson }};
+    const DEFAULT_CASCADE_TYPES = {{ default_cascade_types | tojson }};
 
     // Shared by the Playlist Filter and Playlist Cleanup steps.
     const FIELD_OPERATORS = fieldOperatorsFromSpec({{ field_operators | tojson }});
@@ -315,6 +346,7 @@ block content %}
     function updateStartButton() {
         const hasSteps = stepList.querySelectorAll(".cascade-step-card").length > 0;
         document.getElementById("start-btn").disabled = !hasSteps;
+        document.getElementById("save-default-btn").disabled = !hasSteps;
         document.getElementById("empty-hint").style.display = hasSteps
             ? "none"
             : "block";
@@ -370,6 +402,7 @@ block content %}
     function createStepCard(type, initial) {
         const card = document.createElement("div");
         card.className = "cascade-step-card";
+        card.dataset.stepType = type;
 
         const header = document.createElement("div");
         header.className = "cascade-step-header";
@@ -460,7 +493,62 @@ block content %}
 
     updateStartButton();
 
-    if (Array.isArray(DEFAULT_CASCADE) && DEFAULT_CASCADE.length > 0) {
+    function names(playlists) {
+        return (playlists || []).map((p) => p.name).join(", ");
+    }
+
+    // One line describing a default step's saved settings, for the
+    // read-only view.
+    function summarizeStep(step) {
+        switch (step.type) {
+            case "duplicates":
+                return "Checks " + names(step.playlists);
+            case "playlist_filter": {
+                const dest =
+                    step.destMode === "new"
+                        ? 'a new playlist "' + step.destNewName + '"'
+                        : step.destPlaylistName;
+                return "From " + names(step.sources) + ", where " + describeCriteria(step.criteria) + ", into " + dest;
+            }
+            case "playlist_cleanup":
+                return "Cleans " + step.playlistName + ", where " + describeCriterion(step);
+            case "playlist_diff":
+                return "Adds from " + names(step.sources) + " to " + names(step.targets);
+            case "sync":
+                return "Syncs " + step.name1 + " and " + step.name2;
+        }
+        return "";
+    }
+
+    function showConfigured() {
+        const list = document.getElementById("configured-steps");
+        list.innerHTML = "";
+        let runnable = 0;
+        DEFAULT_CASCADE_TYPES.forEach((type) => {
+            if (!STEP_DEFS[type]) return;
+            const step = (DEFAULT_CASCADE || []).find((s) => s.type === type);
+            const li = document.createElement("li");
+            const title = document.createElement("strong");
+            title.textContent = STEP_DEFS[type].label;
+            const detail = document.createElement("span");
+            detail.textContent = step
+                ? " - " + summarizeStep(step)
+                : " - skipped: no default playlists saved on its page";
+            li.append(title, detail);
+            list.appendChild(li);
+            if (step) runnable++;
+        });
+        document.getElementById("start-default-btn").disabled = runnable === 0;
+        document.getElementById("builder-view").style.display = "none";
+        document.getElementById("configured-view").style.display = "block";
+    }
+
+    let builderPrefilled = false;
+    function showBuilder() {
+        document.getElementById("configured-view").style.display = "none";
+        document.getElementById("builder-view").style.display = "block";
+        if (builderPrefilled || !Array.isArray(DEFAULT_CASCADE) || !DEFAULT_CASCADE.length) return;
+        builderPrefilled = true;
         (async () => {
             try {
                 await ensurePlaylistsLoaded();
@@ -477,6 +565,40 @@ block content %}
             renumberSteps();
             updateStartButton();
         })();
+    }
+
+    document.getElementById("edit-btn").addEventListener("click", showBuilder);
+
+    document.getElementById("save-default-btn").addEventListener("click", async () => {
+        const btn = document.getElementById("save-default-btn");
+        const note = document.getElementById("save-default-note");
+        const types = [...stepList.querySelectorAll(".cascade-step-card")].map((c) => c.dataset.stepType);
+        btn.disabled = true;
+        try {
+            await postToolDefault("{{ url_for('save_default', tool='cascade') }}", types);
+            note.textContent =
+                "Saved as your default. Each step's playlists still come from that function's own default.";
+        } catch (e) {
+            note.textContent = e.message;
+        } finally {
+            updateStartButton();
+        }
+    });
+
+    document.getElementById("clear-default-link").addEventListener("click", async (e) => {
+        e.preventDefault();
+        try {
+            await postToolDefault("{{ url_for('save_default', tool='cascade') }}", null);
+            showBuilder();
+        } catch (err) {
+            e.target.textContent = err.message;
+        }
+    });
+
+    if (Array.isArray(DEFAULT_CASCADE_TYPES) && DEFAULT_CASCADE_TYPES.length) {
+        showConfigured();
+    } else {
+        showBuilder();
     }
 </script>
 {% endif %} {% endblock %}

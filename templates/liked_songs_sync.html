@@ -22,6 +22,10 @@ margin: 0.75rem 0; } .combo label { display: block; margin-bottom: 0.25rem; }
             Edit playlists
         </button>
     </p>
+    <p class="default-note">
+        <span id="default-note"></span>
+        <a href="#" id="clear-default-link">Clear default</a>
+    </p>
 </div>
 
 <div id="picker-view" style="display: none">
@@ -53,7 +57,10 @@ margin: 0.75rem 0; } .combo label { display: block; margin-bottom: 0.25rem; }
     </div>
     <p class="warning" id="picker-error" style="display: none"></p>
     <p>
-        <button class="button" id="save-btn" type="button">Save</button>
+        <button class="button" id="save-btn" type="button">Use these</button>
+        <button class="button secondary" id="save-default-btn" type="button">
+            Save as default
+        </button>
         <button
             class="button secondary"
             id="cancel-btn"
@@ -66,6 +73,7 @@ margin: 0.75rem 0; } .combo label { display: block; margin-bottom: 0.25rem; }
 </div>
 
 <script src="{{ url_for('static', filename='playlist_picker.js') }}"></script>
+<script src="{{ url_for('static', filename='saved_defaults.js') }}"></script>
 <script>
     let currentSaved = {{ default_prefs | tojson }};
 
@@ -156,7 +164,7 @@ margin: 0.75rem 0; } .combo label { display: block; margin-bottom: 0.25rem; }
         if (saved && saved.id1 && saved.id2) showConfigured(saved);
     });
 
-    document.getElementById("save-btn").addEventListener("click", () => {
+    function collectSelection() {
         const a = comboA.getValue();
         const b = comboB.getValue();
         const errorEl = document.getElementById("picker-error");
@@ -164,18 +172,27 @@ margin: 0.75rem 0; } .combo label { display: block; margin-bottom: 0.25rem; }
         if (!a.id || !b.id) {
             errorEl.textContent = "Pick both playlists.";
             errorEl.style.display = "block";
-            return;
+            return null;
         }
         if (a.id === b.id) {
             errorEl.textContent = "Pick two different playlists.";
             errorEl.style.display = "block";
-            return;
+            return null;
         }
         errorEl.style.display = "none";
 
         const saved = { id1: a.id, name1: a.name, id2: b.id, name2: b.name };
-        currentSaved = saved;
-        showConfigured(saved);
+        return saved;
+    }
+
+    setupDefaultControls({
+        url: "{{ url_for('save_default', tool='liked_songs_sync') }}",
+        hasStored: getSaved() !== null,
+        collect: collectSelection,
+        apply: (selection) => {
+            currentSaved = selection;
+            showConfigured(selection);
+        },
     });
 
     const saved = getSaved();

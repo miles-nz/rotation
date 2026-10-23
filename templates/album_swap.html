@@ -58,26 +58,44 @@
 </div>
 
 <div id="playlist-picker-wrap" style="display: none">
-    <fieldset>
-        <legend>Check these playlists</legend>
-        <div id="playlist-combo-list"></div>
-        <p>
-            <button class="button secondary" id="add-playlist-btn" type="button">
-                + Add another playlist
-            </button>
+    <div id="playlists-configured" style="display: none">
+        <p>Checking these playlists:</p>
+        <ul id="configured-playlists"></ul>
+        <p class="default-note">
+            <span id="default-note"></span>
+            <a href="#" id="clear-default-link">Clear default</a>
         </p>
-    </fieldset>
+    </div>
 
-    <p id="picker-loading" style="display: none"><span class="spinner"></span>Loading playlists…</p>
+    <div id="playlists-editing" style="display: none">
+        <fieldset>
+            <legend>Check these playlists</legend>
+            <div id="playlist-combo-list"></div>
+            <p>
+                <button class="button secondary" id="add-playlist-btn" type="button">
+                    + Add another playlist
+                </button>
+            </p>
+        </fieldset>
+        <p id="picker-loading" style="display: none"><span class="spinner"></span>Loading playlists…</p>
+    </div>
+
     <p class="warning" id="picker-error" style="display: none"></p>
     <p>
         <button class="button" id="scan-btn" type="button">
             Find Single Versions to Swap
         </button>
+        <button class="button secondary" id="edit-playlists-btn" type="button">
+            Edit playlists
+        </button>
+        <button class="button secondary" id="save-default-btn" type="button" style="display: none">
+            Save as default
+        </button>
     </p>
 </div>
 
 <script src="{{ url_for('static', filename='playlist_picker.js') }}"></script>
+<script src="{{ url_for('static', filename='saved_defaults.js') }}"></script>
 <script>
     function escapeHtml(s) {
         return String(s).replace(/[&<>"']/g, (c) => (
@@ -132,7 +150,7 @@
             hintEl.textContent = "Couldn't load the tracklist.";
         }
 
-        ensurePlaylistPicker();
+        showPlaylistsView();
     }
 
     document.getElementById("change-album-btn").addEventListener("click", () => {
@@ -267,6 +285,35 @@
         .getElementById("add-playlist-btn")
         .addEventListener("click", () => playlistRowManager.addRow(null));
 
+    // The playlists to check: the saved default, shown read-only so the
+    // page is ready without loading every playlist, until Edit is clicked.
+    let currentPlaylists = {{ default_prefs | tojson }};
+    if (!Array.isArray(currentPlaylists) || !currentPlaylists.length) currentPlaylists = null;
+    let editing = false;
+
+    function showPlaylistsView() {
+        if (currentPlaylists && !editing) {
+            const list = document.getElementById("configured-playlists");
+            list.innerHTML = "";
+            currentPlaylists.forEach((p) => {
+                const li = document.createElement("li");
+                li.textContent = p.name;
+                list.appendChild(li);
+            });
+            document.getElementById("playlists-configured").style.display = "block";
+            document.getElementById("playlists-editing").style.display = "none";
+            document.getElementById("edit-playlists-btn").style.display = "inline-block";
+            document.getElementById("save-default-btn").style.display = "none";
+        } else {
+            editing = true;
+            document.getElementById("playlists-configured").style.display = "none";
+            document.getElementById("playlists-editing").style.display = "block";
+            document.getElementById("edit-playlists-btn").style.display = "none";
+            document.getElementById("save-default-btn").style.display = "inline-block";
+            ensurePlaylistPicker();
+        }
+    }
+
     let playlistsLoaded = false;
     async function ensurePlaylistPicker() {
         if (playlistsLoaded) return;
@@ -276,10 +323,7 @@
                 "{{ url_for('api_playlists') }}",
                 "{{ url_for('login') }}",
             );
-            const defaults = {{ default_prefs | tojson }};
-            playlistRowManager.reset(
-                Array.isArray(defaults) && defaults.length ? defaults : [null],
-            );
+            playlistRowManager.reset(currentPlaylists || [null]);
             playlistsLoaded = true;
         } catch (e) {
             document.getElementById("picker-error").textContent =
@@ -289,16 +333,61 @@
         document.getElementById("picker-loading").style.display = "none";
     }
 
-    document.getElementById("scan-btn").addEventListener("click", () => {
+    // The picked playlists, or null after showing why they can't be used.
+    function selectedPlaylists() {
         const errorEl = document.getElementById("picker-error");
-        if (!selectedAlbum) return;
-        const playlists = playlistRowManager.getValues().filter((p) => p.id);
+        const playlists = editing
+            ? playlistRowManager.getValues().filter((p) => p.id)
+            : currentPlaylists || [];
         if (!playlists.length) {
             errorEl.textContent = "Pick at least one playlist to check.";
             errorEl.style.display = "block";
-            return;
+            return null;
         }
         errorEl.style.display = "none";
+        return playlists.map((p) => ({ id: p.id, name: p.name }));
+    }
+
+    document.getElementById("edit-playlists-btn").addEventListener("click", () => {
+        editing = true;
+        showPlaylistsView();
+    });
+
+    document.getElementById("save-default-btn").addEventListener("click", async () => {
+        const playlists = selectedPlaylists();
+        if (!playlists) return;
+        const errorEl = document.getElementById("picker-error");
+        try {
+            currentPlaylists = await postToolDefault("{{ url_for('save_default', tool='album_swap') }}", playlists);
+        } catch (e) {
+            errorEl.textContent = e.message;
+            errorEl.style.display = "block";
+            return;
+        }
+        editing = false;
+        document.getElementById("default-note").textContent = "Saved as your default.";
+        document.getElementById("clear-default-link").style.display = "inline";
+        showPlaylistsView();
+    });
+
+    document.getElementById("clear-default-link").addEventListener("click", async (e) => {
+        e.preventDefault();
+        const note = document.getElementById("default-note");
+        try {
+            await postToolDefault("{{ url_for('save_default', tool='album_swap') }}", null);
+            note.textContent = "Default cleared - these playlists are for this visit only.";
+            e.target.style.display = "none";
+        } catch (err) {
+            note.textContent = err.message;
+        }
+    });
+
+    document.getElementById("default-note").textContent = "Saved as your default.";
+
+    document.getElementById("scan-btn").addEventListener("click", () => {
+        if (!selectedAlbum) return;
+        const playlists = selectedPlaylists();
+        if (!playlists) return;
         const params = new URLSearchParams();
         params.append("album_id", selectedAlbum.id);
         playlists.forEach((p) => params.append("playlist_id", p.id));

@@ -15,6 +15,8 @@ from core.background_job import BackgroundJob
 import core.cascade_scheduler as cascade_scheduler
 import core.snapshot_scheduler as snapshot_scheduler
 from core.paths import DATA_DIR
+import core.settings_store as settings_store
+import core.tool_defaults as tool_defaults
 from spotify.spotify_client import make_oauth, get_authenticated_client, save_token
 from core.sync import apply_diff, get_target_diff
 import playlists.cascade as cascade_module
@@ -47,9 +49,8 @@ logger = logging.getLogger("app")
 # counts; names can be loaded on demand via /diff/names.
 NAME_LOOKUP_THRESHOLD = 200
 
-# Hardcoded per-tool defaults, set via env vars so the actual playlist
-# IDs/names never land in this public repo. Only applied for
-# SPOTIFY_OWNER_ID so anyone else deploying this app sees a blank picker.
+# The one Spotify account allowed to use the app (see
+# _require_owner_session). Per-tool defaults are only ever shown to it.
 SPOTIFY_OWNER_ID = os.environ.get("SPOTIFY_OWNER_ID")
 
 
@@ -64,31 +65,51 @@ def _parse_json_env(name: str):
         return None
 
 
-DEFAULT_PREFERENCES = {
-    "liked_songs_sync": _parse_json_env("DEFAULT_LIKED_SONGS_SYNC"),
-    "duplicates": _parse_json_env("DEFAULT_DUPLICATES"),
-    "playlist_filter": _parse_json_env("DEFAULT_PLAYLIST_FILTER"),
-    "playlist_cleanup": _parse_json_env("DEFAULT_PLAYLIST_CLEANUP"),
-    "playlist_diff": _parse_json_env("DEFAULT_PLAYLIST_DIFF"),
-    "playlist_prepend": _parse_json_env("DEFAULT_PLAYLIST_PREPEND"),
-    "playlist_search": _parse_json_env("DEFAULT_PLAYLIST_SEARCH"),
-    "album_swap": _parse_json_env("DEFAULT_ALBUM_SWAP"),
-    "cascade": _parse_json_env("DEFAULT_CASCADE"),
-    "ranking_check": _parse_json_env("DEFAULT_RANKING_CHECK"),
-}
+def _stored_default(tool: str):
+    """tool's default playlist selection: whatever was saved from its page
+    (settings.json on the volume), else its old DEFAULT_* env var."""
+    env_name = tool_defaults.TOOL_ENV_VARS[tool]
+    return settings_store.get(f"default:{tool}", lambda: _parse_json_env(env_name))
+
+
+def _copy_env_settings_into_store() -> None:
+    """One-time copy of the settings that used to live only in env vars
+    (each tool's DEFAULT_* plus the scheduler times) into settings.json, so
+    the env vars can be deleted afterwards. Only fills keys that have never
+    been set in the app, so it never overwrites anything saved there - and
+    once a key is copied, later changes to its env var are ignored. An env
+    value that isn't in a shape the app can use is left uncopied (it still
+    works as a fallback) and logged."""
+    values = {}
+    for tool, env_name in tool_defaults.TOOL_ENV_VARS.items():
+        raw = _parse_json_env(env_name)
+        if raw is None:
+            continue
+        try:
+            values[f"default:{tool}"] = tool_defaults.validate(tool, raw)
+        except ValueError as e:
+            logger.warning("Not copying %s into settings: %s", env_name, e)
+    values.update(cascade_scheduler.env_settings())
+    values.update(snapshot_scheduler.env_settings())
+    added = settings_store.seed_missing(values)
+    if added:
+        logger.info("Copied env var settings into settings.json: %s", ", ".join(added))
+
+
+_copy_env_settings_into_store()
 
 
 def _default_preferences(tool: str, sp):
+    # No ownership check needed here: _require_owner_session only lets the
+    # owner's browser in, and only the owner's token is ever saved.
     if sp is None:
         return None
-    if SPOTIFY_OWNER_ID and sp.current_user().get("id") != SPOTIFY_OWNER_ID:
-        return None
-    return DEFAULT_PREFERENCES.get(tool)
+    return _stored_default(tool)
 
 
-# Maps a cascade step type to the DEFAULT_PREFERENCES key holding that same
-# tool's own default config, so DEFAULT_CASCADE only has to name which steps
-# to pre-populate and in what order - not repeat their settings.
+# Maps a cascade step type to the tool whose default holds that step's
+# settings, so the Cascade default only has to name which steps to
+# pre-populate and in what order - not repeat their settings.
 _CASCADE_STEP_PREF_KEYS = {
     "duplicates": "duplicates",
     "playlist_filter": "playlist_filter",
@@ -99,20 +120,18 @@ _CASCADE_STEP_PREF_KEYS = {
 
 
 def _default_cascade_steps(sp):
-    """DEFAULT_CASCADE is just an ordered list of step types, e.g.
+    """The Cascade default is just an ordered list of step types, e.g.
     ["playlist_diff", "duplicates"]. Each step's actual config comes from
-    that tool's own DEFAULT_* env var, so there's one source of truth per
-    playlist selection."""
+    that tool's own default, so there's one source of truth per playlist
+    selection. A step whose tool has no default is skipped."""
     step_types = _default_preferences("cascade", sp)
     if not step_types:
         return None
 
-    # Ownership was already checked above, so it's safe to read the other
-    # tools' defaults straight from DEFAULT_PREFERENCES from here on.
     steps = []
     for step_type in step_types:
         pref_key = _CASCADE_STEP_PREF_KEYS.get(step_type)
-        base = DEFAULT_PREFERENCES.get(pref_key) if pref_key else None
+        base = _stored_default(pref_key) if pref_key else None
         if not base:
             continue
         if step_type == "duplicates":
@@ -676,6 +695,81 @@ def logout():
     # scans and snapshots keep running.
     session.clear()
     return redirect(url_for("home"))
+
+
+# --- Saved defaults and settings ---------------------------------------
+
+# A saved default is a few hundred bytes; anything far bigger didn't come
+# from this app's pages.
+_MAX_DEFAULT_BODY = 64 * 1024
+
+
+@app.route("/defaults/<tool>", methods=["POST"])
+def save_default(tool):
+    """Saves (or, with a null body, clears) tool's default selection.
+    POST + JSON only: the session cookie isn't sent on cross-site POSTs, and
+    a cross-site JSON request would need a CORS preflight this app never
+    approves - so only the app's own pages can call this."""
+    if tool not in tool_defaults.TOOL_ENV_VARS:
+        return jsonify({"error": "unknown_tool"}), 404
+    if not request.is_json:
+        return jsonify({"error": "expected_json"}), 415
+    if request.content_length is None or request.content_length > _MAX_DEFAULT_BODY:
+        return jsonify({"error": "too_large"}), 413
+    try:
+        value = tool_defaults.validate(tool, request.get_json())
+    except ValueError as e:
+        return jsonify({"error": "invalid", "detail": str(e)}), 400
+    settings_store.put(f"default:{tool}", value)
+    return jsonify({"default": value})
+
+
+def _parse_hour(raw) -> int:
+    try:
+        hour = int(raw)
+    except (TypeError, ValueError):
+        raise ValueError("Pick an hour for every time.")
+    if not 0 <= hour <= 23:
+        raise ValueError("Hours must be between 0 and 23.")
+    return hour
+
+
+def _parse_settings_form(form) -> dict:
+    days = cascade_scheduler.schedule_settings()["days"]
+    if form.get("cascade_schedule_mode") == "days":
+        schedule = {d: _parse_hour(form.get(f"day_hour_{d}")) for d in days if form.get(f"day_{d}") == "on"}
+        if not schedule:
+            raise ValueError("Pick at least one day, or choose every day.")
+    else:
+        schedule = {}
+    return {
+        "cascade_auto_enabled": form.get("cascade_auto_enabled") == "on",
+        "cascade_auto_hour": _parse_hour(form.get("cascade_auto_hour")),
+        "cascade_auto_schedule": schedule,
+        "snapshot_hour": _parse_hour(form.get("snapshot_hour")),
+    }
+
+
+@app.route("/settings", methods=["GET", "POST"])
+def settings_page():
+    error = None
+    if request.method == "POST":
+        try:
+            new_settings = _parse_settings_form(request.form)
+        except ValueError as e:
+            error = str(e)
+        else:
+            for key, value in new_settings.items():
+                settings_store.put(key, value)
+            return redirect(url_for("settings_page", saved=1))
+    return render_template(
+        "settings.html",
+        cascade=cascade_scheduler.schedule_settings(),
+        snapshot_hour=snapshot_scheduler.configured_hour(),
+        has_cascade_default=bool(_stored_default("cascade")),
+        error=error,
+        saved=request.args.get("saved") == "1" and error is None,
+    )
 
 
 # --- Liked Songs Sync -------------------------------------------------
@@ -2654,6 +2748,7 @@ def cascade_picker():
         needs_credentials=False,
         logged_in=sp is not None,
         default_cascade=_default_cascade_steps(sp),
+        default_cascade_types=_default_preferences("cascade", sp),
         field_operators=playlist_filter_module.FIELD_OPERATORS,
     )
 
@@ -2687,6 +2782,25 @@ def cascade_start():
         steps = json.loads(request.form.get("steps", "[]"))
     except (TypeError, ValueError):
         steps = []
+    if not steps:
+        return redirect(url_for("cascade_picker"))
+
+    return _start_cascade_run(steps)
+
+
+@app.route("/cascade/start-default", methods=["POST"])
+def cascade_start_default():
+    """Runs the saved default Cascade as-is, from the page's read-only view.
+    Converted to run-ready steps here, the same way the daily auto-scan
+    does, so the page doesn't have to build each step's form first."""
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    steps = cascade_scheduler.canonicalize_default_cascade(_default_cascade_steps(sp) or [])
     if not steps:
         return redirect(url_for("cascade_picker"))
 

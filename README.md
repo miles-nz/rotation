@@ -16,7 +16,7 @@ functions. Currently available:
 - **Track Search** - search Spotify's catalog and preview any track with
   the embedded player.
 - **All Playlists** - lists every playlist in your library; click a name or
-  ID to copy it (handy for filling in the `DEFAULT_*` variables in `.env`).
+  ID to copy it.
 - **Playlist Filter** - pick one or more playlists and one or more
   conditions (added date, release year, popularity, duration, explicit,
   artist name, track name, or genre), and add every matching track to
@@ -52,9 +52,9 @@ functions. Currently available:
   the exact position it occupied.
 - **Cascade** - chain the tools above together, fetching each playlist only
   once no matter how many steps use it, then walk through each step's
-  review screen in order. Optionally, set `CASCADE_AUTO_ENABLED=1` to run
-  the Cascade's default steps automatically as a read-only scan (every day
-  at `CASCADE_AUTO_HOUR`, or on specific days/times via `CASCADE_AUTO_SCHEDULE`)
+  review screen in order. Optionally, turn on the daily scan on the
+  **Settings** page to run the Cascade's default steps automatically as a
+  read-only scan (every day at one time, or on specific days/times)
   - it never applies changes on its own, but if it finds something to
   review it posts a summary and a link back to the app to a Discord or
   Slack webhook (`CASCADE_WEBHOOK_URL`) and shows a "pending review" banner
@@ -140,7 +140,8 @@ functions. Currently available:
   removals, so you can put tracks back later - all of them or just the
   ones you pick. Restored tracks go back in their original positions if
   the playlist hasn't changed since, otherwise at the end.
-- **Snapshots** - once a day (at `SNAPSHOT_HOUR` UTC, default 4), every
+- **Snapshots** - once a day (at the hour set on the **Settings** page,
+  4am UTC by default), every
   playlist you own plus Liked Songs is snapshotted if it's changed since
   its last snapshot. Pick a snapshot to see what's been added and removed
   since, put selected tracks back (at the end of the playlist, or re-liked),
@@ -185,9 +186,17 @@ functions. Currently available:
     ```
     Open http://127.0.0.1:8888/, log in with Spotify if prompted, then pick
     a function from the homepage. Each one follows the same pattern:
-    configure it (pick playlist(s) and, where relevant, a condition - your
-    choice is remembered in the browser, use **Edit** to change it later),
-    then run it. Scanning your library can take a few minutes for large
+    configure it (pick playlist(s) and, where relevant, a condition), then
+    run it. **Use these** applies your picks for this visit only; **Save as
+    default** also remembers them, so next time the page opens straight on
+    them, with **Edit** to change them. Defaults and the scheduler times on
+    the **Settings** page are stored in `settings.json` in `DATA_DIR` (the
+    Railway volume in production; gitignored locally, since it holds
+    playlist IDs). If you set any of the older `DEFAULT_*`, `CASCADE_AUTO_*`
+    or `SNAPSHOT_HOUR` variables in `.env.example`, they're copied into
+    `settings.json` the next time the app starts (never over something
+    already saved in the app). After that, change those settings in the
+    app; the variables are safe to delete. Scanning your library can take a few minutes for large
     playlists, and shows a progress screen with a **Cancel** option. Once
     it finishes you get a preview of the changes (tracks to add/remove) -
     review it and select what you actually want, then apply to make the
@@ -238,7 +247,8 @@ request (like Album Swap's suggestions) run without holding up the others.
    would see inconsistent state.
 6. Attach a Railway volume and mount it via `RAILWAY_VOLUME_MOUNT_PATH` (it
    already needs to exist for the playlist/token caches to survive
-   redeploys - see `core/paths.py`). If you enable `CASCADE_AUTO_ENABLED`,
+   redeploys - see `core/paths.py`). Saved defaults and Settings live in
+   `settings.json` there too. If you turn on the daily Cascade scan,
    this same volume is what lets a pending review survive a redeploy: the
    scheduler's "last ran" marker and any pending review are written there
    too, so a restart won't cause a duplicate notification or lose a review

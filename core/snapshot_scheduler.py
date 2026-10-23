@@ -8,6 +8,7 @@ import threading
 import time
 
 from core.paths import DATA_DIR
+import core.settings_store as settings_store
 from spotify.spotify_client import get_authenticated_client
 import playlists.snapshots as snapshots_module
 
@@ -27,10 +28,20 @@ _warned_logged_out_on: str | None = None
 
 def configured_hour() -> int:
     try:
-        hour = int(os.environ.get("SNAPSHOT_HOUR", str(DEFAULT_HOUR)))
+        stored = settings_store.get("snapshot_hour")
+        hour = int(stored if stored is not None else os.environ.get("SNAPSHOT_HOUR", str(DEFAULT_HOUR)))
     except ValueError:
         hour = DEFAULT_HOUR
     return max(0, min(23, hour))
+
+
+def env_settings() -> dict:
+    """SNAPSHOT_HOUR in settings.json's shape, if it's set and valid - for
+    the one-time copy into it at startup."""
+    try:
+        return {"snapshot_hour": max(0, min(23, int(os.environ["SNAPSHOT_HOUR"])))}
+    except (KeyError, ValueError):
+        return {}
 
 
 def read_last_run() -> dict | None:
