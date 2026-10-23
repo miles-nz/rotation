@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Can't log in - Rotation{% endblock %}
+{% block content %}
+<h1>Can't log in</h1>
+<p class="warning">{{ message }}</p>
+{% if user_id %}
+<p>
+    Your Spotify user ID is <code>{{ user_id }}</code>. Set
+    <code>SPOTIFY_OWNER_ID={{ user_id }}</code> in <code>.env</code> (or your
+    host's environment variables), restart the app, then log in again.
+</p>
+{% endif %}
+<p><a class="button" href="{{ url_for('login') }}">Try again</a></p>
+{% endblock %}

@@ -138,6 +138,10 @@ functions. Currently available:
    `SPOTIFY_CLIENT_SECRET` (`SPOTIFY_REDIRECT_URI` is already set to match
    the redirect URI above).
 
+    The app only lets one Spotify account in: `SPOTIFY_OWNER_ID`. Leave it
+    blank for now - the first time you log in, the app shows your Spotify
+    user ID and tells you to set it, then restart and log in again.
+
     Optionally, to enable Most Played, Forgotten Favourites and Album Swap's
     album suggestions, also fill in `LASTFM_API_KEY` and `LASTFM_USERNAME` -
     get a free API key
@@ -186,9 +190,12 @@ request (like Album Swap's suggestions) run without holding up the others.
 
 1. In Railway, create a new project from this GitHub repo.
 2. Under the service's **Variables**, add `SPOTIFY_CLIENT_ID`,
-   `SPOTIFY_CLIENT_SECRET`, and `SPOTIFY_REDIRECT_URI` (set the redirect URI
+   `SPOTIFY_CLIENT_SECRET`, `SPOTIFY_REDIRECT_URI` (set the redirect URI
    to `https://<your-railway-domain>/callback` - you'll get the domain in
-   the next step, so come back and update this after).
+   the next step, so come back and update this after), and
+   `SPOTIFY_OWNER_ID`. Only a browser that has logged in as that account
+   can use the app - anyone else who finds the URL just gets a login
+   button, and logging in with any other account is refused.
 3. Under **Settings > Networking**, click **Generate Domain** to get a
    public `*.up.railway.app` URL.
 4. Update `SPOTIFY_REDIRECT_URI` in Railway's variables to

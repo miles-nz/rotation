@@ -3,14 +3,18 @@ from __future__ import annotations
 import json
 import logging
 import os
+import secrets
+from datetime import timedelta
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, redirect, render_template, request, url_for
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 from spotipy import Spotify
+from spotipy.cache_handler import MemoryCacheHandler
 
 from core.background_job import BackgroundJob
 import core.cascade_scheduler as cascade_scheduler
-from spotify.spotify_client import make_oauth, get_authenticated_client
+from core.paths import DATA_DIR
+from spotify.spotify_client import make_oauth, get_authenticated_client, save_token
 from core.sync import apply_diff, get_target_diff
 import playlists.cascade as cascade_module
 import playlists.diff_snoozes as diff_snoozes_module
@@ -115,6 +119,35 @@ def _default_cascade_steps(sp):
 
 app = Flask(__name__)
 
+def _load_secret_key() -> str:
+    """Signs the session cookie that proves a browser logged in as the
+    owner. SECRET_KEY wins if set; otherwise one is generated once and kept
+    on the volume, so logins survive redeploys without another env var.
+    O_EXCL makes the first writer win if two processes race to create it."""
+    env_key = os.environ.get("SECRET_KEY")
+    if env_key:
+        return env_key
+    path = DATA_DIR / ".flask_secret_key"
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return path.read_text().strip()
+    key = secrets.token_hex(32)
+    with os.fdopen(fd, "w") as f:
+        f.write(key)
+    return key
+
+
+app.secret_key = _load_secret_key()
+app.config.update(
+    # Lax keeps the cookie off cross-site POSTs, so another site can't
+    # submit forms here as you, while still sending it on Spotify's
+    # redirect back to /callback.
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.environ.get("SPOTIFY_REDIRECT_URI", "").startswith("https://"),
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+)
+
 
 @app.template_filter("duration")
 def _format_duration(duration_ms) -> str:
@@ -170,6 +203,26 @@ def _credentials_configured() -> bool:
         and os.environ.get("SPOTIFY_CLIENT_SECRET")
         and os.environ.get("SPOTIFY_REDIRECT_URI")
     )
+
+
+# Everything else requires a browser that logged in as SPOTIFY_OWNER_ID.
+# The Spotify token itself is shared server-side (the schedulers need it
+# with no browser around), so this session check is what stops anyone who
+# finds the URL from acting as the owner.
+_PUBLIC_ENDPOINTS = {"login", "callback", "logout", "static"}
+
+
+@app.before_request
+def _require_owner_session():
+    if request.endpoint in _PUBLIC_ENDPOINTS or not _credentials_configured():
+        return None
+    if SPOTIFY_OWNER_ID and session.get("user_id") == SPOTIFY_OWNER_ID:
+        return None
+    if request.method != "GET" or request.path.startswith("/api/"):
+        return jsonify({"error": "not_authenticated"}), 401
+    if request.endpoint != "home":
+        return redirect(url_for("home"))
+    return render_template("home.html", needs_credentials=False, logged_in=False)
 
 
 def _lastfm_configured() -> bool:
@@ -538,15 +591,56 @@ def all_playlists_page():
 
 @app.route("/login")
 def login():
-    oauth = make_oauth(open_browser=False)
-    return redirect(oauth.get_authorize_url())
+    # Random state, checked in /callback, so a login can only be completed
+    # by the browser that started it.
+    state = secrets.token_urlsafe(16)
+    session["oauth_state"] = state
+    return redirect(make_oauth(open_browser=False).get_authorize_url(state=state))
 
 
 @app.route("/callback")
 def callback():
-    oauth = make_oauth(open_browser=False)
+    expected_state = session.pop("oauth_state", None)
+    if not expected_state or not secrets.compare_digest(request.args.get("state", ""), expected_state):
+        return render_template(
+            "login_error.html",
+            message="That login link expired or came from a different browser. "
+            "Make sure you open the app at the same address as SPOTIFY_REDIRECT_URI.",
+        ), 400
     code = request.args.get("code")
-    oauth.get_access_token(code, as_dict=False)
+    if not code:
+        return redirect(url_for("home"))
+
+    # Exchange the code in memory first - only the owner's token is ever
+    # written to the shared token file the rest of the app uses.
+    cache = MemoryCacheHandler()
+    access_token = make_oauth(open_browser=False, cache_handler=cache).get_access_token(
+        code, as_dict=False, check_cache=False
+    )
+    user_id = Spotify(auth=access_token).current_user()["id"]
+
+    if not SPOTIFY_OWNER_ID:
+        return render_template(
+            "login_error.html",
+            message="This app only lets its owner in, but SPOTIFY_OWNER_ID isn't set.",
+            user_id=user_id,
+        ), 403
+    if user_id != SPOTIFY_OWNER_ID:
+        logger.warning("Rejected Spotify login from non-owner account %s", user_id)
+        return render_template("login_error.html", message="This app is private."), 403
+
+    save_token(cache.get_cached_token())
+    session.clear()
+    session["user_id"] = user_id
+    session.permanent = True
+    return redirect(url_for("home"))
+
+
+@app.route("/logout")
+def logout():
+    # Only forgets this browser - the shared token stays so the daily
+    # scans and snapshots keep running.
+    session.clear()
     return redirect(url_for("home"))
 
 
