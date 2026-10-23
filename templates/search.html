@@ -6,8 +6,8 @@ solid var(--accent); outline-offset: -1px; } .result { border: 1px solid var(--b
 border-radius: 8px; padding: 1rem; margin: 0.75rem 0; } .result-title { display:
 flex; align-items: center; gap: 0.6rem; font-weight: bold; margin-bottom:
 0.5rem; } .result-thumb { width: 2.5rem; height: 2.5rem; border-radius: 4px;
-object-fit: cover; background: var(--thumb-bg); flex-shrink: 0; } .result-embed { border:
-none; border-radius: 12px; width: 100%; height: 80px; background: var(--bg); } {% endblock %} {% block
+object-fit: cover; background: var(--thumb-bg); flex-shrink: 0; } .result-embed {
+border-radius: 12px; overflow: hidden; height: 80px; background: var(--bg); } .result-embed iframe { display: block; border: none; } {% endblock %} {% block
 content %}
 <h1>Track Search</h1>
 <p>
@@ -35,6 +35,7 @@ content %}
 <p id="search-hint" class="hint">Start typing to search.</p>
 <div id="results"></div>
 
+<script src="{{ url_for('static', filename='spotify_embeds.js') }}"></script>
 <script>
     const input = document.getElementById("search-input");
     const resultsEl = document.getElementById("results");
@@ -65,20 +66,13 @@ content %}
             title.appendChild(label);
             div.appendChild(title);
 
-            const trackId = t.uri.split(":").pop();
-            const iframe = document.createElement("iframe");
-            iframe.className = "result-embed";
-            iframe.src =
-                "https://open.spotify.com/embed/track/" +
-                trackId +
-                "?utm_source=generator&theme=0";
-            iframe.frameBorder = "0";
-            iframe.allow =
-                "autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture";
-            iframe.loading = "lazy";
-            div.appendChild(iframe);
+            const embed = document.createElement("div");
+            embed.className = "result-embed";
+            embed.dataset.uri = t.uri;
+            div.appendChild(embed);
 
             resultsEl.appendChild(div);
+            SpotifyEmbeds.mount(embed);
         });
     }
 

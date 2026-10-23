@@ -1,9 +1,9 @@
 {% extends "base.html" %} {% block title %}Duplicates - Rotation{% endblock %}
 {% block extra_style %} .dup-group { border: 1px solid var(--border);
 border-radius: 8px; padding: 1rem; margin: 0.75rem 0; } .dup-title {
-font-weight: bold; margin-bottom: 0.5rem; } .dup-embed { border: none;
-border-radius: 12px; width: 100%; height: 80px; margin-bottom: 0.5rem;
-background: var(--bg); } .occurrence { display: flex; align-items: center; gap:
+font-weight: bold; margin-bottom: 0.5rem; } .dup-embed {
+border-radius: 12px; overflow: hidden; height: 80px; margin-bottom: 0.5rem;
+background: var(--bg); } .dup-embed iframe { display: block; border: none; } .occurrence { display: flex; align-items: center; gap:
 0.5rem; padding: 0.5rem 0; cursor: pointer; } .occurrence .playlist-name { flex:
 1; } .occurrence .added-date { color: var(--muted); font-size: 0.85rem; } {%
 endblock %} {% block content %}
@@ -31,19 +31,7 @@ endblock %} {% block content %}
     {% for dup in duplicates %}
     <div class="dup-group">
         <div class="dup-title">{{ dup.artists }} – {{ dup.name }}</div>
-        <iframe
-            class="dup-embed"
-            src="https://open.spotify.com/embed/track/{{ dup.uri.split(':')[-1] }}?utm_source=generator&theme=0"
-            frameborder="0"
-            allow="
-                autoplay;
-                clipboard-write;
-                encrypted-media;
-                fullscreen;
-                picture-in-picture;
-            "
-            loading="lazy"
-        ></iframe>
+        <div class="dup-embed" data-spotify-embed data-uri="{{ dup.uri }}"></div>
         {% for occ in dup.occurrences %}
         <label class="occurrence">
             <input
@@ -71,6 +59,7 @@ endblock %} {% block content %}
         >
     </p>
 </form>
+<script src="{{ url_for('static', filename='spotify_embeds.js') }}"></script>
 <script>
     (function () {
         const submitButton = document.getElementById("apply-submit");

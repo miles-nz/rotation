@@ -1,9 +1,9 @@
 {% extends "base.html" %} {% block title %}Playlist Diff - Rotation{% endblock
 %} {% block extra_style %} .diff-track { border: 1px solid var(--border);
 border-radius: 8px; padding: 1rem; margin: 0.75rem 0; } .diff-title {
-font-weight: bold; margin-bottom: 0.5rem; } .diff-embed { border: none;
-border-radius: 12px; width: 100%; height: 80px; margin-bottom: 0.5rem;
-background: var(--bg); } .diff-target { display: flex; align-items: center; gap:
+font-weight: bold; margin-bottom: 0.5rem; } .diff-embed {
+border-radius: 12px; overflow: hidden; height: 80px; margin-bottom: 0.5rem;
+background: var(--bg); } .diff-embed iframe { display: block; border: none; } .diff-target { display: flex; align-items: center; gap:
 0.5rem; padding: 0.35rem 0; cursor: pointer; } {% endblock %} {% block content
 %}
 <h1>Playlist Diff</h1>
@@ -36,19 +36,7 @@ background: var(--bg); } .diff-target { display: flex; align-items: center; gap:
     {% for track in missing %}
     <div class="diff-track">
         <div class="diff-title">{{ track.artists }} – {{ track.name }}</div>
-        <iframe
-            class="diff-embed"
-            src="https://open.spotify.com/embed/track/{{ track.uri.split(':')[-1] }}?utm_source=generator&theme=0"
-            frameborder="0"
-            allow="
-                autoplay;
-                clipboard-write;
-                encrypted-media;
-                fullscreen;
-                picture-in-picture;
-            "
-            loading="lazy"
-        ></iframe>
+        <div class="diff-embed" data-spotify-embed data-uri="{{ track.uri }}"></div>
         {% for t in targets %}
         <label class="diff-target">
             <input
@@ -76,6 +64,7 @@ background: var(--bg); } .diff-target { display: flex; align-items: center; gap:
         >
     </p>
 </form>
+<script src="{{ url_for('static', filename='spotify_embeds.js') }}"></script>
 <script>
     (function () {
         const submitButton = document.getElementById("diff-submit");
