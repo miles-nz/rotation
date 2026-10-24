@@ -18,10 +18,17 @@
 .rank-embed iframe { display: block; border: none; }
 /* Blue is always the song; amber, orange and red (the meter only) say how
    strong the inconsistency is; green is the song's own ranking. */
-.rank-song { --song: #2563eb; --sev-1: #b7791f; --sev-2: #ea580c; --sev-3: #dc2626; }
+body { --song: #2563eb; --sev-1: #b7791f; --sev-2: #ea580c; --sev-3: #dc2626; }
 @media (prefers-color-scheme: dark) {
-  .rank-song { --song: #60a5fa; --sev-1: #facc15; --sev-2: #fb923c; --sev-3: #f87171; }
+  body { --song: #60a5fa; --sev-1: #facc15; --sev-2: #fb923c; --sev-3: #f87171; }
+  .view-switch a.active { color: #0b1a2e; }
 }
+.view-switch { display: inline-flex; border: 1px solid var(--border-light); border-radius: 8px; overflow: hidden; margin: 0.5rem 0 0.75rem; }
+.view-switch a { padding: 0.45rem 0.9rem; text-decoration: none; color: var(--text); font-size: 0.9rem; }
+.view-switch a + a { border-left: 1px solid var(--border-light); }
+.view-switch a:hover { background: var(--hover-bg); }
+.view-switch a.active { background: var(--song); color: #fff; font-weight: 600; }
+.view-switch .count { opacity: 0.75; font-weight: 400; }
 .rank-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
 .meter { display: flex; align-items: center; gap: 0.4rem; flex-shrink: 0; font-size: 0.85rem; color: var(--muted); }
 .meter-cells { display: inline-flex; gap: 2px; }
@@ -134,12 +141,33 @@
 </p>
 {% endif %}
 
+{% if all_total %}
+<div class="view-switch" role="group" aria-label="Which suggestions to show">
+    <a href="{{ url_for('ranking_check_scan_result') }}"{% if not played_more %} class="active" aria-current="true"{% endif %}>
+        All suggestions <span class="count">{{ all_total }}</span>
+    </a>
+    <a href="{{ url_for('ranking_check_scan_result', played_more=1) }}"{% if played_more %} class="active" aria-current="true"{% endif %}>
+        Played more than ranked <span class="count">{{ played_more_total }}</span>
+    </a>
+</div>
+{% endif %}
+
 {% if not results %}
-<p class="hint">Nothing to flag - your rankings all line up.</p>
+<p class="hint">
+    {% if played_more %}
+    No songs you've played more than their rankings suggest.
+    {% else %}
+    Nothing to flag - your rankings all line up.
+    {% endif %}
+</p>
 <p><a class="button" href="{{ url_for('ranking_check_picker') }}">Back</a></p>
 {% else %}
 <p>
-    {% if total_flagged > results|length %}
+    {% if played_more %}
+    {{ total_flagged }} song{{ 's' if total_flagged != 1 else '' }} you've played more than their
+    rankings suggest{{ ' - showing the ' ~ results|length ~ ' strongest' if total_flagged > results|length else '' }}.
+    Only the plays checks count here, so the meter and the moves are about them alone.
+    {% elif total_flagged > results|length %}
     Found {{ total_flagged }} songs to look at - showing the {{ results|length }} strongest.
     {% else %}
     Found {{ total_flagged }} song{{ 's' if total_flagged != 1 else '' }} to look at, strongest first.
@@ -151,7 +179,7 @@
 </p>
 
 {% for r in results %}
-<div class="rank-song" id="song-{{ loop.index }}">
+<div class="rank-song" id="song-{{ r.key | replace(':', '-') }}">
     <div class="rank-head">
         <div class="rank-title">
             {{ r.artists }} – {{ r.name }}{% if r.explicit %}<span class="explicit-badge">E</span>{% endif %}
@@ -206,6 +234,7 @@
         {{ 'in ' ~ (r.tiers | map(attribute='name') | join(', ')) if r.tiers else 'out of the ranking playlists' }}.
         <form method="post" action="{{ url_for('ranking_check_restore') }}">
             <input type="hidden" name="key" value="{{ r.key }}" />
+            {% if played_more %}<input type="hidden" name="played_more" value="1" />{% endif %}
             <input type="hidden" name="from" value="result" />
             <button class="button secondary" type="submit">Undo</button>
         </form>
@@ -216,12 +245,14 @@
         {% for m in r.moves %}
         <form method="post" action="{{ url_for('ranking_check_move') }}">
             <input type="hidden" name="key" value="{{ r.key }}" />
+            {% if played_more %}<input type="hidden" name="played_more" value="1" />{% endif %}
             <input type="hidden" name="tier" value="{{ m.tier }}" />
             <button class="button" type="submit">{{ m.label }}</button>
         </form>
         {% endfor %}
         <form method="post" action="{{ url_for('ranking_check_dismiss') }}">
             <input type="hidden" name="key" value="{{ r.key }}" />
+            {% if played_more %}<input type="hidden" name="played_more" value="1" />{% endif %}
             <button class="button secondary" type="submit">This is fine</button>
         </form>
         {% if r.is_local %}

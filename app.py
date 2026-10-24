@@ -2353,12 +2353,20 @@ def ranking_check_scan_result():
     if result is None:
         return redirect(url_for("ranking_check_picker"))
 
+    played_more = request.args.get("played_more") == "1"
+    shown = ranking_check_module.view(result["results"], played_more)
     return render_template(
         "ranking_check_result.html",
-        max_results=ranking_check_module.MAX_RESULTS,
         unranked_days=ranking_check_module.UNRANKED_TAIL_DAYS,
         demotion_min_days=ranking_check_module.DEMOTION_MIN_DAYS,
-        **result,
+        **{
+            **result,
+            "results": shown["results"],
+            "total_flagged": shown["total"],
+            "played_more": played_more,
+            "all_total": len(result["results"]),
+            "played_more_total": ranking_check_module.view(result["results"], True)["total"],
+        },
     )
 
 
@@ -2371,9 +2379,12 @@ def _ranking_check_entry(key: str | None):
 
 
 def _ranking_check_back(entry: dict | None):
-    url = url_for("ranking_check_scan_result")
+    """Back to the results, in the view the form was posted from, at the
+    song's card."""
+    played_more = request.form.get("played_more") == "1"
+    url = url_for("ranking_check_scan_result", played_more=1) if played_more else url_for("ranking_check_scan_result")
     if entry is not None:
-        url += f"#song-{_ranking_job.result['results'].index(entry) + 1}"
+        url += "#song-" + entry["key"].replace(":", "-")
     return redirect(url)
 
 

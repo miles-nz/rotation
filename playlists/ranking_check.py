@@ -221,12 +221,12 @@ def find_inconsistencies(
     hides a song while it's still in the same ranking playlist(s) it was in
     when dismissed.
 
-    Returns {"results": [...], "total_flagged", "tiers",
+    Returns {"results": [...], "tiers",
     "year_playlist_name", "period_label", "period_plays", "only_added_in_period",
     "demotions_enabled", "year_check_enabled", "unranked_count",
     "year_sections", "year_length", "meter_max", "dismissed_hidden",
-    "stale_dismissals"}. Each result is a song with at
-    least one flag, strongest first, capped at MAX_RESULTS."""
+    "stale_dismissals"}. Each result is a song with at least one flag,
+    strongest first - all of them; view() picks what the page shows."""
     now = datetime.now(timezone.utc)
     now_ts = int(now.timestamp())
     period = _period(period_key)
@@ -471,6 +471,8 @@ def find_inconsistencies(
             song["flags"].append(
                 {
                     "check": "plays",
+                    "played_more": True,
+                    "tier": target,
                     "strength": tier - target,
                     "points": _points(tier - target, int(far_past)),
                     "chart": plays_chart(song_group, plays, target),
@@ -493,6 +495,7 @@ def find_inconsistencies(
                 song["flags"].append(
                     {
                         "check": "plays",
+                        "tier": target,
                         "strength": target - tier,
                         "points": _points(target - tier, int(far_under)),
                         "chart": plays_chart(song_group, plays, target),
@@ -521,6 +524,7 @@ def find_inconsistencies(
             song["flags"].append(
                 {
                     "check": "year_plays",
+                    "played_more": gap > 0,
                     "strength": apart,
                     "points": 1 if apart < 1.5 else 2 if apart < 2 else 3,
                     "chart": {"type": "strip", "position": song["year_position"]},
@@ -587,7 +591,16 @@ def find_inconsistencies(
                 "plays": song["plays"],
                 "plays_ytd": song["plays_ytd"],
                 "flags": [
-                    {"check": f["check"], "text": f["text"], "points": f["points"], "chart": f["chart"]}
+                    {
+                        "check": f["check"],
+                        "text": f["text"],
+                        "points": f["points"],
+                        "chart": f["chart"],
+                        # Listened to more than its rankings suggest - what
+                        # the results page's "played more" view keeps.
+                        "played_more": f.get("played_more", False),
+                        "tier": f.get("tier"),
+                    }
                     for f in song["flags"]
                 ],
                 "moves": moves,
@@ -605,8 +618,7 @@ def find_inconsistencies(
 
     logger.info("ranking check: %d song(s) flagged", len(results))
     return {
-        "results": results[:MAX_RESULTS],
-        "total_flagged": len(results),
+        "results": results,
         "tiers": [{"id": t["id"], "name": name} for t, name in zip(tiers, tier_names)],
         "year_playlist_name": year_name,
         "period_label": period["label"],
@@ -621,6 +633,40 @@ def find_inconsistencies(
         "dismissed_hidden": dismissed_hidden,
         "stale_dismissals": stale_dismissals,
     }
+
+
+def view(results: list[dict], played_more_only: bool) -> dict:
+    """What the results page shows from find_inconsistencies' results:
+    {"results": up to MAX_RESULTS, strongest first, "total": how many there
+    are before that cap}.
+
+    played_more_only keeps just the songs listened to more than their
+    rankings suggest - the plays check saying move up, or played more this
+    year than the yearly position suggests - with only those flags, scored
+    and sorted on them alone and offering only the moves up they suggest.
+    Each is a copy, so a move or dismissal marked on the scan's own result
+    shows in either view."""
+    if not played_more_only:
+        return {"results": results[:MAX_RESULTS], "total": len(results)}
+    shown = []
+    for result in results:
+        flags = [f for f in result["flags"] if f["played_more"]]
+        if not flags:
+            continue
+        up_tiers = {f["tier"] for f in flags if f["tier"] is not None}
+        score = min(METER_MAX, sum(f["points"] for f in flags))
+        shown.append(
+            {
+                **result,
+                "flags": flags,
+                "moves": [m for m in result["moves"] if m["tier"] in up_tiers],
+                "reorder": [],
+                "score": score,
+                "strength_label": _strength_label(score),
+            }
+        )
+    shown.sort(key=lambda r: (-r["score"], -len(r["flags"]), -r["plays"]))
+    return {"results": shown[:MAX_RESULTS], "total": len(shown)}
 
 
 def move_song(sp: Spotify, result: dict, tiers: list[dict], tier_index: int) -> str | None:

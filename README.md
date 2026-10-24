@@ -102,7 +102,8 @@ functions. Currently available:
   to the suggested ranking playlist with one click (it's added to the
   bottom and taken out of its other ranking playlists),
   or mark it as fine so it isn't flagged again for 6 months while it stays
-  where it is.
+  where it is. A switch narrows the list to songs you've played more than
+  their rankings suggest, showing only those flags and the moves up.
   Reordering the yearly playlist is left to you. Requires Last.fm to be
   configured (see Setup), and the first run downloads your listening
   history (see Listening history below).
