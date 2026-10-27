@@ -122,10 +122,22 @@ body { --song: #2563eb; --sev-1: #b7791f; --sev-2: #ea580c; --sev-3: #dc2626; }
     {{ year_playlist_name }} checks.
 </p>
 {% endif %}
+{% if plays_check_enabled %}
+<p class="hint">
+    Plays are measured against how much you play songs you first heard in the period - a typical
+    {% for t in plays_scale %}{{ t.name }} {{ 'song gets ' if loop.first else '' }}{{ t.plays }}{{ ', ' if not loop.last else '' }}{% endfor %}
+    - and a song you'd heard before the period needs about three quarters of that to move up a ranking.
+</p>
 {% if not demotions_enabled %}
 <p class="hint">
     Plays only suggest moving songs up for periods under {{ demotion_min_days }} days - a song
     not played lately doesn't mean it deserves a lower ranking.
+</p>
+{% endif %}
+{% else %}
+<p class="hint">
+    Too few songs first heard in this period to measure plays against, so the plays check is off -
+    try 90 days or longer.
 </p>
 {% endif %}
 {% if not year_check_enabled %}

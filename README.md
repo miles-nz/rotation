@@ -91,9 +91,12 @@ functions. Currently available:
   played them this year, songs in more than one ranking playlist, and
   yearly songs in no ranking playlist at all. Pick which plays count - the
   last 7 days to 12 months, this year or all time - and optionally only
-  check songs added to a ranking playlist in that period. Plays are
-  compared within songs you first heard in the period, or within older
-  songs you came back to, since the two behave very differently. Songs at
+  check songs added to a ranking playlist in that period. What each
+  ranking looks like in plays comes from songs you first heard in the
+  period, and every song is measured against that. A song you'd heard
+  before the period moves up one ranking at a time, once it reaches 3/4
+  of a typical new song's plays there; only new songs are suggested for
+  moving down. Songs at
   the bottom of the yearly playlist added in the last 30 days count as not
   ranked yet. The 100 strongest suggestions are listed, each with a
   strength meter (Mild, Moderate or Strong - it adds up how far past the

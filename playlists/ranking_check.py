@@ -43,9 +43,15 @@ DEMOTION_MIN_DAYS = 90
 # little about where the songs will settle.
 MIN_AGE_DAYS = 30
 
-# A ranking needs at least this many songs in a comparison group for its
-# quartiles to mean anything.
+# A ranking needs at least this many new songs played in the period for
+# its quartiles to mean anything as a scale.
 MIN_GROUP_SONGS = 4
+
+# A song heard before the period moves up a ranking once it reaches this
+# share of a typical new song's plays there (and out-plays three quarters
+# of the older songs there). 3/4 rather than 90%: typical counts are small
+# (3, 5, 9, 18), so 90% rounds up to needing the typical count itself.
+OLDER_SONG_SHARE = 0.75
 
 # Short periods leave most songs on 1 or 2 plays, where "more than most"
 # is a coin toss - so a song needs at least this many plays in the period
@@ -223,8 +229,9 @@ def find_inconsistencies(
 
     Returns {"results": [...], "tiers",
     "year_playlist_name", "period_label", "period_plays", "only_added_in_period",
-    "demotions_enabled", "year_check_enabled", "unranked_count",
-    "year_sections", "year_length", "meter_max", "dismissed_hidden",
+    "demotions_enabled", "year_check_enabled", "plays_check_enabled",
+    "plays_scale", "unranked_count", "year_sections", "year_length",
+    "meter_max", "dismissed_hidden",
     "stale_dismissals"}. Each result is a song with at least one flag,
     strongest first - all of them; view() picks what the page shows."""
     now = datetime.now(timezone.utc)
@@ -424,50 +431,86 @@ def find_inconsistencies(
 
     # 2. Plays vs ranking playlists. Each ranking playlist spans years and
     # most of it isn't played in any given period, so only songs played in
-    # the period are judged (no plays isn't evidence either way), and each
-    # is compared against played songs from the same group: ones first
-    # heard during the period, or ones first heard before it and come back
-    # to. Kept apart because they behave nothing alike - new songs get
-    # dozens of plays and line up with the rankings, while songs come back
-    # to mostly get one or two whichever ranking they're in, so a returning
-    # song with ten is exactly the "I like it more now" case.
-    def group(song: dict) -> str:
-        return "new" if song["first_ts"] >= start_ts else "returning"
+    # the period are judged (no plays isn't evidence either way).
+    #
+    # What each ranking looks like in plays comes from songs first heard in
+    # the period: new songs get dozens of plays and line up with the
+    # rankings. A new song is suggested for a higher ranking when it
+    # out-plays three quarters of the new songs there.
+    #
+    # Songs heard before the period mostly get one or two plays whichever
+    # ranking they're in. Compared only with each other, any older song with
+    # three plays "deserved" the top ranking; held to the new songs' bar,
+    # none ever qualified. So an older song moves up one ranking at a time,
+    # when it out-plays three quarters of the older songs there and reaches
+    # OLDER_SONG_SHARE of a typical new song there - the "I like it more
+    # now" case, at a level that still means something. Only new songs are
+    # suggested for moving down - an older song getting fewer plays than
+    # new ones is just how listening goes, not a sign it's ranked too high.
+    def is_new(song: dict) -> bool:
+        return song["first_ts"] >= start_ts
 
-    group_labels = {
-        "new": "song you've played" if start_ts == 0 else "song you first heard in the period",
-        "returning": "song you'd heard before the period",
-    }
+    scale_label = "song you've played" if start_ts == 0 else "song you first heard in the period"
     judged = [s for s in songs.values() if s["tier"] is not None and s["plays"] > 0 and old_enough(s)]
-    group_plays: dict[tuple[str, int], list[int]] = {}
-    for song in judged:
-        for i in song["tier_uris"]:
-            group_plays.setdefault((group(song), i), []).append(song["plays"])
+    # The scale counts new songs too recent to be judged themselves, or a
+    # period of 30 days or less would have no new songs to build it from.
+    scale_plays: dict[int, list[int]] = {}
+    older_plays: dict[int, list[int]] = {}
+    for song in songs.values():
+        if song["tier"] is not None and song["plays"] > 0:
+            for i in song["tier_uris"]:
+                (scale_plays if is_new(song) else older_plays).setdefault(i, []).append(song["plays"])
     # Quartiles rather than the middle song: "more than half" flags
     # hundreds of songs on noise alone.
-    group_quartiles = {
-        key: quantiles(plays, n=4) for key, plays in group_plays.items() if len(plays) >= MIN_GROUP_SONGS
-    }
-    group_typical = {key: round(median(plays)) for key, plays in group_plays.items() if len(plays) >= MIN_GROUP_SONGS}
+    scale_quartiles = {i: quantiles(plays, n=4) for i, plays in scale_plays.items() if len(plays) >= MIN_GROUP_SONGS}
+    scale_median = {i: median(plays) for i, plays in scale_plays.items() if len(plays) >= MIN_GROUP_SONGS}
+    scale_typical = {i: round(m) for i, m in scale_median.items()}
+    older_quartiles = {i: quantiles(plays, n=4) for i, plays in older_plays.items() if len(plays) >= MIN_GROUP_SONGS}
 
-    def plays_chart(song_group: str, plays: int, target: int) -> dict:
+    def older_bar(tier: int) -> float | None:
+        """Plays an older song needs to beat to move up into tier."""
+        if tier not in scale_median:
+            return None
+        return max(older_quartiles[tier][2] if tier in older_quartiles else 0, OLDER_SONG_SHARE * scale_median[tier])
+    # Moving up needs a ranking above to compare with, so with fewer than
+    # two rankings on the scale the plays check can't suggest anything.
+    plays_check_enabled = len(scale_quartiles) >= 2
+
+    def plays_chart(plays: int, target: int) -> dict:
         """The song's plays against a typical song from the suggested ranking."""
         return {
             "type": "plays",
             "plays": plays,
-            "typical": {"name": tier_names[target], "plays": group_typical[(song_group, target)]},
+            "typical": {"name": tier_names[target], "plays": scale_typical[target]},
         }
 
     for song in judged:
-        tier, plays, song_group = song["tier"], song["plays"], group(song)
+        tier, plays = song["tier"], song["plays"]
         target = tier
-        if plays >= MIN_PROMOTION_PLAYS:
+        if plays >= MIN_PROMOTION_PLAYS and is_new(song):
             # Walk up while it out-plays three quarters of the next ranking up.
-            while target > 0 and plays > group_quartiles.get((song_group, target - 1), [0, 0, float("inf")])[2]:
+            while target > 0 and target - 1 in scale_quartiles and plays > scale_quartiles[target - 1][2]:
                 target -= 1
+        elif plays >= MIN_PROMOTION_PLAYS and tier > 0:
+            bar = older_bar(tier - 1)
+            if bar is not None and plays > bar:
+                target = tier - 1
         if target < tier:
-            typical = group_typical[(song_group, target)]
-            far_past = plays >= PLAYS_FAR_PAST * group_quartiles[(song_group, target)][2]
+            typical = scale_typical[target]
+            if is_new(song):
+                far_past = plays >= PLAYS_FAR_PAST * scale_quartiles[target][2]
+                text = (
+                    f"{_plural(plays, 'play')} in the period - "
+                    + (f"{_times(plays / typical)} a typical " if typical else "a typical ")
+                    + f"{tier_names[target]} {scale_label} ({typical})"
+                )
+            else:
+                far_past = plays >= scale_median[target]
+                text = (
+                    f"{_plural(plays, 'play')} in the period for a song you'd heard before it - "
+                    + (f"{_times(plays / typical)} a typical " if plays >= typical else "close to a typical ")
+                    + f"{tier_names[target]} {scale_label} ({typical})"
+                )
             song["flags"].append(
                 {
                     "check": "plays",
@@ -475,32 +518,31 @@ def find_inconsistencies(
                     "tier": target,
                     "strength": tier - target,
                     "points": _points(tier - target, int(far_past)),
-                    "chart": plays_chart(song_group, plays, target),
-                    "text": f"{_plural(plays, 'play')} in the period - "
-                    + (f"{_times(plays / typical)} a typical " if typical else "a typical ")
-                    + f"{tier_names[target]} {group_labels[song_group]} ({typical})",
+                    "chart": plays_chart(plays, target),
+                    "text": text,
                 }
             )
             suggest_move(song, target)
-        elif demotions_enabled:
+        elif demotions_enabled and is_new(song):
             # Walk down while three quarters of the next ranking down out-play it.
             while (
                 target < len(tiers) - 1
-                and plays < group_quartiles.get((song_group, target + 1), [0])[0]
+                and target + 1 in scale_quartiles
+                and plays < scale_quartiles[target + 1][0]
             ):
                 target += 1
             if target > tier:
-                typical = group_typical[(song_group, target)]
-                far_under = plays * PLAYS_FAR_PAST <= group_quartiles[(song_group, target)][0]
+                typical = scale_typical[target]
+                far_under = plays * PLAYS_FAR_PAST <= scale_quartiles[target][0]
                 song["flags"].append(
                     {
                         "check": "plays",
                         "tier": target,
                         "strength": target - tier,
                         "points": _points(target - tier, int(far_under)),
-                        "chart": plays_chart(song_group, plays, target),
+                        "chart": plays_chart(plays, target),
                         "text": f"{_plural(plays, 'play')} in the period - a typical "
-                        f"{tier_names[target]} {group_labels[song_group]} has {typical}",
+                        f"{tier_names[target]} {scale_label} has {typical}",
                     }
                 )
                 suggest_move(song, target)
@@ -626,6 +668,8 @@ def find_inconsistencies(
         "only_added_in_period": only_added_in_period,
         "demotions_enabled": demotions_enabled,
         "year_check_enabled": year_check_enabled,
+        "plays_check_enabled": plays_check_enabled,
+        "plays_scale": [{"name": tier_names[i], "plays": scale_typical[i]} for i in sorted(scale_typical)],
         "unranked_count": len(year_tracks) - ranked_count,
         "year_sections": year_sections,
         "year_length": year_length,
