@@ -27,6 +27,7 @@ import playlists.playlist_cache as playlist_cache_module
 import playlists.playlist_filter as playlist_filter_module
 import playlists.playlist_cleanup as playlist_cleanup_module
 import playlists.playlist_diff as playlist_diff_module
+import playlists.playlist_overlap as playlist_overlap_module
 import playlists.playlist_prepend as playlist_prepend_module
 import playlists.playlist_search as playlist_search_module
 import playlists.playlist_swap as playlist_swap_module
@@ -228,6 +229,7 @@ _ranking_job = BackgroundJob(
         "app",
     ]
 )
+_overlap_job = BackgroundJob(["playlists.playlist_overlap", "playlists.playlist_cache", "app"])
 _visuals_job = BackgroundJob(
     [
         "lastfm.scrobble_history",
@@ -438,6 +440,14 @@ def _run_ranking_check_scan(tier_ids: list[str], year_id: str, period: str, only
         )
         ranking_dismissals_module.restore(result["stale_dismissals"])
         return result
+
+    return target
+
+
+def _run_playlist_overlap(main_id: str, colour_ids: list[str]):
+    def target(cancel_check):
+        sp = get_authenticated_client()
+        return playlist_overlap_module.build(sp, main_id, colour_ids, cancel_check=cancel_check)
 
     return target
 
@@ -2565,6 +2575,88 @@ def ranking_check_restore():
             entry["status"] = None
         return _ranking_check_back(entry)
     return redirect(url_for("ranking_check_picker"))
+
+
+# --- Playlist Overlap -----------------------------------------------------
+# One playlist (by default the yearly one) drawn as a band per song, each
+# coloured by which of a set of other playlists (by default the ranking
+# playlists) it's in. The colour playlists default to Ranking Check's saved
+# default rather than one of their own, so the ranking playlists are only
+# set in one place. Read-only and manual only, not a Cascade step.
+
+
+@app.route("/playlist-overlap")
+def playlist_overlap_picker():
+    if not _credentials_configured():
+        return render_template("playlist_overlap.html", needs_credentials=True)
+
+    sp = get_authenticated_client()
+    return render_template(
+        "playlist_overlap.html",
+        needs_credentials=False,
+        logged_in=sp is not None,
+        default_prefs=_default_preferences("ranking_check", sp),
+        max_colours=playlist_overlap_module.MAX_COLOUR_PLAYLISTS,
+    )
+
+
+@app.route("/playlist-overlap/scan")
+def playlist_overlap_scan():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    main_id = request.args.get("main_id")
+    colour_ids = list(dict.fromkeys(request.args.getlist("colour_id")))
+    if (
+        not main_id
+        or not colour_ids
+        or len(colour_ids) > playlist_overlap_module.MAX_COLOUR_PLAYLISTS
+        or not all(colour_ids)
+        or main_id in colour_ids
+    ):
+        return redirect(url_for("playlist_overlap_picker"))
+
+    _overlap_job.start(_run_playlist_overlap(main_id, colour_ids))
+
+    return render_template(
+        "progress.html",
+        status_url=url_for("playlist_overlap_scan_status"),
+        cancel_url=url_for("playlist_overlap_scan_cancel"),
+        result_url=url_for("playlist_overlap_scan_result"),
+        back_url=url_for("playlist_overlap_picker"),
+        heading="Reading your playlists…",
+        description="Reading the playlist and the playlists to colour it by. Playlists that haven't changed since last time come straight from the cache.",
+    )
+
+
+@app.route("/playlist-overlap/scan/status")
+def playlist_overlap_scan_status():
+    return jsonify(_overlap_job.status())
+
+
+@app.route("/playlist-overlap/scan/cancel", methods=["POST"])
+def playlist_overlap_scan_cancel():
+    _overlap_job.cancel()
+    return jsonify({"ok": True})
+
+
+@app.route("/playlist-overlap/scan/result")
+def playlist_overlap_scan_result():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    result = _overlap_job.result
+    if result is None:
+        return redirect(url_for("playlist_overlap_picker"))
+    return render_template("playlist_overlap_result.html", **result)
 
 
 # --- Listening Visuals ----------------------------------------------------

@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+{% block title %}Playlist Overlap - Rotation{% endblock %}
+{% block extra_style %}
+/* One blue shade per colour playlist, strongest = best (see
+   playlist_overlap.colours), plus each playlist's marker on its bands. */
+body {
+  {% for p in colour_playlists %}--tier-{{ loop.index0 }}: {{ p.colour.light }};{% endfor %}
+  --tier-none: {{ none_colour.light }};
+}
+@media (prefers-color-scheme: dark) {
+  body {
+    {% for p in colour_playlists %}--tier-{{ loop.index0 }}: {{ p.colour.dark }};{% endfor %}
+    --tier-none: {{ none_colour.dark }};
+  }
+}
+.overlap-scale { display: flex; align-items: stretch; gap: 2px; margin: 1rem 0 0.25rem; padding: 0; list-style: none; }
+.overlap-scale li { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.9rem; }
+.overlap-scale .bar { height: 1.3rem; display: flex; align-items: center; justify-content: center; font-size: 0.8rem; line-height: 1; }
+.overlap-scale li:first-child .bar { border-radius: 4px 0 0 4px; }
+.overlap-scale li:last-child .bar { border-radius: 0 4px 4px 0; }
+.overlap-scale li:only-child .bar { border-radius: 4px; }
+.overlap-scale .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.overlap-scale .count, .overlap-legend .count { color: var(--muted); }
+.overlap-ends { display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.overlap-legend { display: flex; flex-wrap: wrap; gap: 0.4rem 1.1rem; margin: 0.75rem 0 1rem; padding: 0; list-style: none; font-size: 0.9rem; }
+.overlap-legend li { display: inline-flex; align-items: center; gap: 0.4rem; }
+.swatch { display: inline-flex; gap: 2px; width: 1.4rem; height: 0.8rem; border-radius: 3px; overflow: hidden; }
+.swatch span { flex: 1; }
+.overlap-chart { position: relative; margin: 1rem 0 2rem; }
+.overlap-row { display: grid; grid-template-columns: 2.25rem 1fr; align-items: center; height: 16px; cursor: default; }
+.overlap-row .pos {
+  position: relative; height: 100%; font-size: 0.7rem; color: var(--muted);
+  text-align: right; padding-right: 0.4rem;
+}
+.overlap-row .pos span { position: absolute; right: 0.4rem; top: 50%; transform: translateY(-50%); line-height: 1; }
+.band { display: flex; gap: 2px; height: 100%; }
+.band span { flex: 1; display: flex; align-items: center; padding-left: 0.3rem; font-size: 0.68rem; line-height: 1; overflow: hidden; }
+.overlap-row:first-child .band span { border-top-left-radius: 4px; border-top-right-radius: 4px; }
+.overlap-row:last-child .band span { border-bottom-left-radius: 4px; border-bottom-right-radius: 4px; }
+/* A playlist with no emoji is marked by its number instead; a badge in the
+   page's own colours keeps it readable on every shade. */
+.num-marker { display: inline-block; min-width: 0.85em; padding: 0.05em 0.25em; border-radius: 3px; background: var(--bg); color: var(--text); font-size: 0.65rem; font-weight: 600; text-align: center; line-height: 1.2; }
+.overlap-row.active .band { outline: 2px solid var(--text); outline-offset: 1px; position: relative; z-index: 1; }
+.overlap-tooltip {
+  position: absolute; pointer-events: none; display: none; z-index: 2; left: 3rem; right: 0.5rem;
+  max-width: 20rem; margin-left: auto;
+  background: var(--panel-bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.4rem 0.6rem; font-size: 0.85rem; line-height: 1.35;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+.overlap-tooltip .where { color: var(--muted); }
+{% endblock %}
+{% block content %}
+{% macro marker(p) %}{% if p.marker_is_number %}<span class="num-marker">{{ p.marker }}</span>{% else %}{{ p.marker }}{% endif %}{% endmacro %}
+<h1>Playlist Overlap</h1>
+<p>
+    <strong>{{ main_name }}</strong>, {{ bands | length }} song{{ '' if bands | length == 1 else 's' }}
+    from top to bottom, coloured by which playlist each song is in.
+    <a href="{{ url_for('playlist_overlap_picker') }}">Change playlists</a>
+</p>
+
+<ol class="overlap-scale">
+    {% for p in colour_playlists %}
+    <li>
+        <span class="bar" style="background: var(--tier-{{ loop.index0 }})">{{ marker(p) }}</span>
+        <span class="name">{{ p.name }} <span class="count">{{ p.count }}</span></span>
+    </li>
+    {% endfor %}
+</ol>
+{% if colour_playlists | length > 1 %}
+<div class="overlap-ends"><span>Best</span><span>Worst</span></div>
+{% endif %}
+<ul class="overlap-legend">
+    <li>
+        <span class="swatch"><span style="background: var(--tier-none)"></span></span>
+        In none <span class="count">{{ none_count }}</span>
+    </li>
+    {% if colour_playlists | length > 1 %}
+    <li>
+        <span class="swatch">
+            <span style="background: var(--tier-0)"></span>
+            <span style="background: var(--tier-{{ colour_playlists | length - 1 }})"></span>
+        </span>
+        In more than one <span class="count">{{ multi_count }}</span>
+    </li>
+    {% endif %}
+</ul>
+
+{% if not bands %}
+<p class="hint">{{ main_name }} is empty.</p>
+{% else %}
+<p class="hint">Hover over a song, or tap it on a phone, to see what it is.</p>
+<div class="overlap-chart" id="overlap-chart" role="img"
+     aria-label="{{ main_name }}: {% for p in colour_playlists %}{{ p.count }} in {{ p.name }}, {% endfor %}{{ none_count }} in none">
+    {% for b in bands %}
+    <div class="overlap-row" data-index="{{ loop.index0 }}">
+        <div class="pos">{% if b.position == 1 or b.position % 10 == 0 %}<span>{{ b.position }}</span>{% endif %}</div>
+        <div class="band">
+            {% for t in b.tiers %}<span style="background: var(--tier-{{ t }})">{{ marker(colour_playlists[t]) }}</span>{% else %}<span style="background: var(--tier-none)"></span>{% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+    <div class="overlap-tooltip" id="overlap-tooltip"></div>
+</div>
+{% endif %}
+
+<script>
+    const BANDS = {{ bands | tojson }};
+    const TIER_NAMES = {{ colour_playlists | map(attribute='name') | list | tojson }};
+    const chart = document.getElementById("overlap-chart");
+    const tooltip = document.getElementById("overlap-tooltip");
+    let active = null;
+
+    function where(tiers) {
+        if (!tiers.length) return "In none of these playlists";
+        const last = TIER_NAMES.length - 1;
+        const names = tiers.map((t) => {
+            if (last === 0) return TIER_NAMES[t];
+            return TIER_NAMES[t] + (t === 0 ? " (best)" : t === last ? " (worst)" : "");
+        });
+        return "In " + (names.length === 1 ? names[0] : names.slice(0, -1).join(", ") + " and " + names.at(-1));
+    }
+
+    function show(row) {
+        if (active) active.classList.remove("active");
+        active = row;
+        row.classList.add("active");
+        const band = BANDS[Number(row.dataset.index)];
+        tooltip.innerHTML = "";
+        const title = document.createElement("div");
+        const strong = document.createElement("strong");
+        strong.textContent = "#" + band.position + " " + band.name;
+        title.appendChild(strong);
+        const artists = document.createElement("div");
+        artists.textContent = band.artists;
+        const whereEl = document.createElement("div");
+        whereEl.className = "where";
+        whereEl.textContent = where(band.tiers);
+        tooltip.append(title, artists, whereEl);
+        tooltip.style.display = "block";
+        // Just below the band, or above it near the bottom of the page.
+        const top = row.offsetTop + row.offsetHeight + 6;
+        const fitsBelow = row.getBoundingClientRect().bottom + tooltip.offsetHeight + 12 < window.innerHeight;
+        tooltip.style.top = (fitsBelow ? top : row.offsetTop - tooltip.offsetHeight - 6) + "px";
+    }
+
+    function hide() {
+        if (active) active.classList.remove("active");
+        active = null;
+        if (tooltip) tooltip.style.display = "none";
+    }
+
+    if (chart) {
+        chart.addEventListener("pointermove", (e) => {
+            if (e.pointerType !== "mouse") return;
+            const row = e.target.closest(".overlap-row");
+            if (row && row !== active) show(row);
+        });
+        chart.addEventListener("pointerleave", (e) => {
+            if (e.pointerType === "mouse") hide();
+        });
+        // Taps (and clicks) pick a song too, so it works on a phone.
+        chart.addEventListener("click", (e) => {
+            const row = e.target.closest(".overlap-row");
+            if (row) show(row);
+        });
+        document.addEventListener("click", (e) => {
+            if (!chart.contains(e.target)) hide();
+        });
+    }
+</script>
+{% endblock %}

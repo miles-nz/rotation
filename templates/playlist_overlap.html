@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% block title %}Playlist Overlap - Rotation{% endblock %}
+{% block content %}
+<h1>Playlist Overlap</h1>
+<p>
+    See one playlist song by song, coloured by which of a set of other
+    playlists each song is in - for example, where the songs in your yearly
+    playlist sit among your ranking playlists.
+</p>
+
+{% if needs_credentials %}
+<p class="warning">
+    No Spotify credentials found. Copy <code>.env.example</code> to
+    <code>.env</code> and fill in <code>SPOTIFY_CLIENT_ID</code> and
+    <code>SPOTIFY_CLIENT_SECRET</code>, then restart the app. See the README for
+    how to register a Spotify app.
+</p>
+{% elif not logged_in %}
+<p><a class="button" href="{{ url_for('login') }}">Log in with Spotify</a></p>
+{% else %}
+<form method="get" action="{{ url_for('playlist_overlap_scan') }}" id="picker-form">
+    <fieldset>
+        <legend>Playlist to show</legend>
+        <div class="combo">
+            <input
+                type="text"
+                id="main-combo-input"
+                class="combo-input"
+                placeholder="Search your playlists…"
+                autocomplete="off"
+            />
+            <div class="combo-panel" id="main-combo-panel"></div>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Colour by these playlists, best first</legend>
+        <div id="colours-configured" style="display: none">
+            <ol id="configured-colours"></ol>
+            <p>
+                <button class="button secondary" id="edit-colours-btn" type="button">
+                    Edit playlists
+                </button>
+            </p>
+            <p class="default-note">
+                Your Ranking Check default. Change it on
+                <a href="{{ url_for('ranking_check_picker') }}">Ranking Check</a>.
+            </p>
+        </div>
+        <div id="colours-editing" style="display: none">
+            <div id="colour-combo-list"></div>
+            <p>
+                <button class="button secondary" id="add-colour-btn" type="button">
+                    + Add another playlist
+                </button>
+            </p>
+            <p class="hint">
+                Up to {{ max_colours }}. These are for this visit only. They default to your
+                <a href="{{ url_for('ranking_check_picker') }}">Ranking Check</a> playlists.
+            </p>
+        </div>
+    </fieldset>
+
+    <p id="picker-loading"><span class="spinner"></span>Loading playlists…</p>
+    <p class="warning" id="picker-error" style="display: none"></p>
+    <p>
+        <button class="button" type="submit" id="submit-btn" disabled>Show overlap</button>
+    </p>
+</form>
+
+<script src="{{ url_for('static', filename='playlist_picker.js') }}"></script>
+<script>
+    const DEFAULT_COLOURS = {{ default_prefs | tojson }};
+    const MAX_COLOURS = {{ max_colours }};
+    const colourRows = createComboRowManager(document.getElementById("colour-combo-list"), 1);
+    let mainCombo = null;
+
+    document.getElementById("add-colour-btn").addEventListener("click", () => {
+        if (colourRows.getValues().length < MAX_COLOURS) colourRows.addRow(null);
+    });
+
+    // The saved playlists show read-only straight away; the full playlist
+    // list still loads in the background, to find this year's playlist and
+    // to have the picker ready if Edit is clicked.
+    const savedColours = Array.isArray(DEFAULT_COLOURS) && DEFAULT_COLOURS.length ? DEFAULT_COLOURS : null;
+    let editingColours = !savedColours;
+
+    function showColours() {
+        if (!editingColours) {
+            const list = document.getElementById("configured-colours");
+            list.innerHTML = "";
+            savedColours.forEach((p) => {
+                const li = document.createElement("li");
+                li.textContent = p.name;
+                list.appendChild(li);
+            });
+        }
+        document.getElementById("colours-configured").style.display = editingColours ? "none" : "block";
+        document.getElementById("colours-editing").style.display = editingColours ? "block" : "none";
+    }
+
+    document.getElementById("edit-colours-btn").addEventListener("click", () => {
+        editingColours = true;
+        showColours();
+    });
+
+    showColours();
+
+    (async () => {
+        const errorEl = document.getElementById("picker-error");
+        let playlists = [];
+        try {
+            playlists = await fetchPlaylists("{{ url_for('api_playlists') }}", "{{ url_for('login') }}");
+        } catch (e) {
+            errorEl.textContent = "Failed to load your playlists. Check your connection and try again.";
+            errorEl.style.display = "block";
+        }
+        document.getElementById("picker-loading").style.display = "none";
+
+        colourRows.reset(savedColours || [null]);
+
+        // The yearly playlist is named after the year, so January just works.
+        const thisYear = String(new Date().getFullYear());
+        const yearPlaylist = playlists.find((p) => p.name.trim() === thisYear);
+        mainCombo = setupCombo(
+            document.getElementById("main-combo-input"),
+            document.getElementById("main-combo-panel"),
+            yearPlaylist ? { id: yearPlaylist.id, name: yearPlaylist.name } : null,
+        );
+        document.getElementById("submit-btn").disabled = false;
+    })();
+
+    document.getElementById("picker-form").addEventListener("submit", (e) => {
+        const form = e.target;
+        const errorEl = document.getElementById("picker-error");
+        const colours = editingColours ? colourRows.getValues() : savedColours;
+        const main = mainCombo ? mainCombo.getValue() : { id: null };
+        let error = null;
+        if (!main.id) {
+            error = "Pick the playlist to show.";
+        } else if (colours.length > MAX_COLOURS) {
+            error = `Pick at most ${MAX_COLOURS} playlists to colour by - beyond that there are no more shades to give them.`;
+        } else if (!colours.length || colours.some((p) => !p.id)) {
+            error = "Pick a playlist for every colour slot (or remove empty ones).";
+        } else if (new Set(colours.map((p) => p.id)).size !== colours.length) {
+            error = "Each playlist to colour by can only be picked once.";
+        } else if (colours.some((p) => p.id === main.id)) {
+            error = "The playlist to show can't also be one to colour by.";
+        }
+        if (error) {
+            e.preventDefault();
+            errorEl.textContent = error;
+            errorEl.style.display = "block";
+            return;
+        }
+        errorEl.style.display = "none";
+
+        form.querySelectorAll("input[data-generated]").forEach((el) => el.remove());
+        const addHidden = (name, value) => {
+            const input = document.createElement("input");
+            input.type = "hidden";
+            input.name = name;
+            input.value = value;
+            input.dataset.generated = "1";
+            form.appendChild(input);
+        };
+        addHidden("main_id", main.id);
+        colours.forEach((p) => addHidden("colour_id", p.id));
+    });
+</script>
+{% endif %} {% endblock %}

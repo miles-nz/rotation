@@ -112,6 +112,20 @@ functions. Currently available:
   Reordering the yearly playlist is left to you. Requires Last.fm to be
   configured (see Setup), and the first run downloads your listening
   history (see Listening history below).
+- **Playlist Overlap** - see one playlist song by song, coloured by which
+  of a set of other playlists each song is in. It defaults to the playlist
+  named after the current year, coloured by your Ranking Check playlists
+  (change those on Ranking Check), so you can see at a glance where the
+  songs in your yearly ranking come from. Each song is a band, top to
+  bottom in playlist order, shaded from dark to light blue for your best to
+  worst playlist (light to dark in dark mode) and marked with that
+  playlist's emoji (e.g. 1️⃣), or its number if its name has none - so the
+  shades show the overall pattern and the emoji says exactly which
+  playlist. Songs in none of them are pale grey, and songs in more than one are split between their colours. A
+  legend counts each, and hovering over a band (or tapping it on a phone)
+  shows its position, the song and which playlists it's in. Songs are
+  matched across releases like Duplicate Finder, so a remaster still counts
+  as the single. Read-only, and doesn't need Last.fm.
 - **Listening Visuals** - your Last.fm listening history as art.
   **Listening Shape** draws every track you played as a glowing stroke,
   placed by when you played it (in your browser's time zone) and coloured
