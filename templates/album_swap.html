@@ -10,6 +10,9 @@
 .selected-album { display: flex; align-items: center; gap: 0.75rem; border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem; margin: 0.75rem 0; }
 .selected-album img { width: 3.5rem; height: 3.5rem; border-radius: 4px; object-fit: cover; background: var(--thumb-bg); }
 .album-tracklist { margin: 0.5rem 0 0 1.25rem; color: var(--muted); font-size: 0.9rem; }
+.detect-switched { border-top: 1px solid var(--border); margin-top: 1.5rem; padding-top: 0.5rem; }
+.detect-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.detect-row select { padding: 0.5rem; border: 1px solid var(--border); border-radius: 6px; }
 {% endblock %}
 {% block content %}
 <h1>Album Swap</h1>
@@ -46,6 +49,28 @@
         />
         <div class="combo-panel" id="album-search-panel"></div>
     </div>
+
+    {% if not needs_lastfm %}
+    <div class="detect-switched">
+        <h2>Or detect switched albums</h2>
+        <p class="hint">
+            Find songs you've moved from playing the single to playing the
+            album version, then check the playlists below for the singles
+            of all those albums at once.
+        </p>
+        <div class="detect-row">
+            <label for="detect-window">Switched to the album</label>
+            <select id="detect-window">
+                {% for value, label in detect_windows %}
+                <option value="{{ value }}" {{ "selected" if value == default_detect_window }}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <button class="button" id="detect-btn" type="button">
+                Detect Switched Albums
+            </button>
+        </div>
+    </div>
+    {% endif %}
 </div>
 
 <div id="selected-album-wrap" style="display: none">
@@ -82,7 +107,7 @@
 
     <p class="warning" id="picker-error" style="display: none"></p>
     <p>
-        <button class="button" id="scan-btn" type="button">
+        <button class="button" id="scan-btn" type="button" style="display: none">
             Find Single Versions to Swap
         </button>
         <button class="button secondary" id="edit-playlists-btn" type="button">
@@ -104,6 +129,9 @@
     }
 
     let selectedAlbum = null;
+    // With Last.fm set up the playlists are needed before an album is
+    // picked (for Detect Switched Albums), so they're shown from the start.
+    const canDetect = {{ "false" if needs_lastfm else "true" }};
 
     function renderSelectedAlbum(album) {
         const el = document.getElementById("selected-album");
@@ -124,6 +152,7 @@
         document.getElementById("album-picker").style.display = "none";
         document.getElementById("selected-album-wrap").style.display = "block";
         document.getElementById("playlist-picker-wrap").style.display = "block";
+        document.getElementById("scan-btn").style.display = "inline-block";
         renderSelectedAlbum(album);
 
         const tracklistEl = document.getElementById("album-tracklist");
@@ -157,7 +186,8 @@
         selectedAlbum = null;
         document.getElementById("album-picker").style.display = "block";
         document.getElementById("selected-album-wrap").style.display = "none";
-        document.getElementById("playlist-picker-wrap").style.display = "none";
+        document.getElementById("scan-btn").style.display = "none";
+        if (!canDetect) document.getElementById("playlist-picker-wrap").style.display = "none";
     });
 
     // --- Suggestions ---------------------------------------------------------
@@ -393,5 +423,22 @@
         playlists.forEach((p) => params.append("playlist_id", p.id));
         window.location = "{{ url_for('album_swap_scan') }}?" + params.toString();
     });
+
+    if (canDetect) {
+        document.getElementById("playlist-picker-wrap").style.display = "block";
+        showPlaylistsView();
+
+        document.getElementById("detect-btn").addEventListener("click", () => {
+            const playlists = selectedPlaylists();
+            if (!playlists) {
+                document.getElementById("picker-error").scrollIntoView({ block: "center" });
+                return;
+            }
+            const params = new URLSearchParams();
+            params.append("window", document.getElementById("detect-window").value);
+            playlists.forEach((p) => params.append("playlist_id", p.id));
+            window.location = "{{ url_for('album_swap_detect') }}?" + params.toString();
+        });
+    }
 </script>
 {% endif %} {% endblock %}

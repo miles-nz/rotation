@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 _SINGLE_SUFFIX_RE = re.compile(r"\s*[-(]\s*single(\s+version)?\)?\s*$", re.IGNORECASE)
 
 
-def _normalized_signature(artists: str, name: str) -> tuple[str, str]:
+def normalized_signature(artists: str, name: str) -> tuple[str, str]:
     """Identifies "the same song" for single-vs-album matching: artist +
     title, case/whitespace insensitive, with a trailing single-release
     suffix stripped from the title (see _SINGLE_SUFFIX_RE)."""
@@ -26,11 +26,40 @@ def _normalized_signature(artists: str, name: str) -> tuple[str, str]:
     return (artists.strip().lower(), name.strip().lower())
 
 
+# Edition matching: an album's other editions are the artist's full albums
+# whose title is the same once bracketed/dashed suffixes and punctuation are
+# dropped, or extends it by whole words ("SMILE! :D" -> "SMILE! :D plus+",
+# "Butterfly" -> "Butterfly (Expanded Edition)"). A title match alone isn't
+# trusted - see _EDITION_MIN_OVERLAP.
+_BRACKETED_RE = re.compile(r"\s*[(\[][^)\]]*[)\]]")
+_DASH_SUFFIX_RE = re.compile(r"\s+-\s+.*$")
+_NON_WORD_RE = re.compile(r"[^\w]+")
+
+# Share of the smaller edition's songs the two editions must have in common
+# to count as editions of one album rather than two albums that happen to
+# share a title prefix (e.g. "Butterfly" and "Butterfly Effect").
+_EDITION_MIN_OVERLAP = 0.5
+
+
+def _edition_base_title(name: str) -> str:
+    name = _DASH_SUFFIX_RE.sub("", _BRACKETED_RE.sub("", name))
+    return _NON_WORD_RE.sub(" ", name.lower()).strip()
+
+
+def _titles_could_be_editions(a: str, b: str) -> bool:
+    shorter, longer = sorted((_edition_base_title(a), _edition_base_title(b)), key=len)
+    return bool(shorter) and (longer == shorter or longer.startswith(shorter + " "))
+
+
+def _signatures(album: dict) -> set[tuple[str, str]]:
+    return {normalized_signature(t["artists"], t["name"]) for t in album["tracks"]}
+
+
 def get_album_tracks(sp: Spotify, album_id: str) -> dict:
     """Fetches an album's own metadata and full tracklist (in album order)
     straight from Spotify's catalog - not from any playlist. Returns
-    {"id", "uri", "name", "artists", "image_url",
-     "tracks": [{"uri", "name", "artists"}, ...]}.
+    {"id", "uri", "name", "artists", "artist_id", "image_url",
+     "release_date", "tracks": [{"uri", "name", "artists"}, ...]}.
     """
     album = sp.album(album_id)
     artists = album.get("artists") or []
@@ -55,43 +84,135 @@ def get_album_tracks(sp: Spotify, album_id: str) -> dict:
         "uri": album["uri"],
         "name": album["name"],
         "artists": ", ".join(a["name"] for a in artists),
+        "artist_id": artists[0]["id"] if artists else None,
         "image_url": images[0]["url"] if images else None,
+        "release_date": album.get("release_date") or "",
         "tracks": tracks,
     }
 
 
+def get_album_family(
+    sp: Spotify, album_id: str, cancel_check: CancelCheck | None = None
+) -> dict:
+    """The album plus its other editions (deluxe, expanded, "plus+" and so
+    on - see _titles_could_be_editions and _EDITION_MIN_OVERLAP), and which
+    edition each song should be swapped to: the earliest-released edition
+    it's on, so songs from the original album go to the original and
+    songs only on a later edition go to that edition. Editions released
+    the same day prefer the one with fewer tracks (the standard), then the
+    album asked for.
+
+    Returns {"editions": [album dicts from get_album_tracks, earliest first],
+             "by_signature": {signature: (edition, track)},
+             "uris": every track uri on every edition}.
+    """
+    album = get_album_tracks(sp, album_id)
+    editions = [album]
+    if album["artist_id"]:
+        page = sp.artist_albums(album["artist_id"], include_groups="album", limit=50)
+        seen = {album["id"]}
+        while page:
+            for candidate in page.get("items") or []:
+                if candidate["id"] in seen or not _titles_could_be_editions(album["name"], candidate["name"]):
+                    continue
+                seen.add(candidate["id"])
+                check_cancelled(cancel_check)
+                other = get_album_tracks(sp, candidate["id"])
+                shared = len(_signatures(album) & _signatures(other))
+                smaller = min(len(album["tracks"]), len(other["tracks"])) or 1
+                if shared / smaller >= _EDITION_MIN_OVERLAP:
+                    editions.append(other)
+            page = sp.next(page) if page.get("next") else None
+
+    editions.sort(key=lambda e: (e["release_date"], len(e["tracks"]), e["id"] != album_id))
+    by_signature: dict[tuple[str, str], tuple[dict, dict]] = {}
+    uris: set[str] = set()
+    for edition in editions:
+        for track in edition["tracks"]:
+            uris.add(track["uri"])
+            by_signature.setdefault(normalized_signature(track["artists"], track["name"]), (edition, track))
+
+    if len(editions) > 1:
+        logger.info(
+            "album swap: '%s' has %d editions - each song goes to the earliest one it's on: %s",
+            album["name"],
+            len(editions),
+            ", ".join(f"'{e['name']}' ({e['release_date']})" for e in editions),
+        )
+    return {"editions": editions, "by_signature": by_signature, "uris": uris}
+
+
 def find_swaps(
     sp: Spotify,
-    album_id: str,
+    album_ids: list[str],
     playlist_ids: list[str],
     cancel_check: CancelCheck | None = None,
 ) -> dict:
-    """The scan job target. Finds, in each of playlist_ids, any track that
-    is a single-version match (_normalized_signature) for a track on the
-    given album, where the playlist track's uri isn't already that album
-    track's uri (nothing to swap if it's already the album version). Local
-    files are never candidates - the Web API can't remove/reinsert them at
-    a specific position any more than it can add them.
+    """The scan job target. Expands each album into its family of editions
+    (get_album_family) and finds, in each of playlist_ids, any track that
+    is a single-version match (normalized_signature) for a song in one of
+    those families. Each match is swapped to the earliest edition that
+    song is on.
+
+    Not retroactive: a playlist track that's already on any edition of any
+    of these albums is left alone, so an existing deluxe entry is never
+    moved to the standard edition (or the other way round). Local files are
+    never candidates - the Web API can't remove/reinsert them at a specific
+    position any more than it can add them.
+
+    Albums that are editions of one already in the list (e.g. detection
+    found both the standard and the deluxe) are folded into that family.
+    When a track matches songs in more than one family, the first family
+    wins, so each playlist position is offered at most once. Playlists are
+    read once however many albums there are.
 
     A track's position is just its index in playlist_cache's already-
     ordered track list - there's no separate position field on a track
     dict.
 
-    Returns {"album": {"id","name","artists","image_url"},
-             "swaps": [{"id", "playlist_id", "playlist_name", "position",
-                        "single": {"uri","name","artists"},
-                        "album_track": {"uri","name","artists"}}, ...]}
-    "id" (f"{playlist_id}:{position}") is a stable per-row key used to
+    Returns {"albums": [{"id","name","artists","image_url","edition_ids",
+                         "editions": [{"id","name","release_date"}, ...]}, ...],
+             "album": the first of "albums",
+             "swaps": [{"id", "album_id", "playlist_id", "playlist_name",
+                        "position", "single": {"uri","name","artists"},
+                        "album_track": {"uri","name","artists"},
+                        "edition": {"id","name"} or None}, ...]}
+    One entry in "albums" per family, shown as its earliest edition; a
+    swap's "album_id" is that family's id, and "edition" is set when the
+    swap goes to a later edition rather than that one. "id"
+    (f"{playlist_id}:{position}") is a stable per-row key used to
     round-trip which swaps the user confirmed on the review screen - the
     apply step re-reads this same result from server memory rather than
     trusting track data sent back from the client.
     """
-    album = get_album_tracks(sp, album_id)
-    album_by_signature: dict[tuple[str, str], dict] = {}
-    for track in album["tracks"]:
-        album_by_signature.setdefault(
-            _normalized_signature(track["artists"], track["name"]), track
+    albums: list[dict] = []
+    by_signature: dict[tuple[str, str], tuple[str, dict, dict]] = {}
+    album_uris: set[str] = set()
+    covered: set[str] = set()
+    for album_id in album_ids:
+        if album_id in covered:
+            continue
+        check_cancelled(cancel_check)
+        family = get_album_family(sp, album_id, cancel_check)
+        editions = family["editions"]
+        covered.update(e["id"] for e in editions)
+        first = editions[0]
+        albums.append(
+            {
+                "id": first["id"],
+                "name": first["name"],
+                "artists": first["artists"],
+                "image_url": first["image_url"],
+                "edition_ids": [e["id"] for e in editions],
+                "editions": [
+                    {"id": e["id"], "name": e["name"], "release_date": e["release_date"]}
+                    for e in editions
+                ],
+            }
         )
+        album_uris |= family["uris"]
+        for signature, (edition, track) in family["by_signature"].items():
+            by_signature.setdefault(signature, (first["id"], edition, track))
 
     playlists = playlist_cache_module.get_playlists(sp, playlist_ids, cancel_check)
 
@@ -99,16 +220,16 @@ def find_swaps(
     for playlist_id in playlist_ids:
         playlist = playlists[playlist_id]
         for position, track in enumerate(playlist["tracks"]):
-            if track.get("is_local"):
+            if track.get("is_local") or track["uri"] in album_uris:
                 continue
-            album_track = album_by_signature.get(
-                _normalized_signature(track["artists"], track["name"])
-            )
-            if album_track is None or album_track["uri"] == track["uri"]:
+            match = by_signature.get(normalized_signature(track["artists"], track["name"]))
+            if match is None:
                 continue
+            family_id, edition, album_track = match
             swaps.append(
                 {
                     "id": f"{playlist_id}:{position}",
+                    "album_id": family_id,
                     "playlist_id": playlist_id,
                     "playlist_name": playlist["name"],
                     "position": position,
@@ -118,23 +239,24 @@ def find_swaps(
                         "artists": track["artists"],
                     },
                     "album_track": album_track,
+                    "edition": (
+                        {"id": edition["id"], "name": edition["name"]}
+                        if edition["id"] != family_id
+                        else None
+                    ),
                 }
             )
         check_cancelled(cancel_check)
 
     logger.info(
-        "album swap scan: found %d swap(s) across %d playlist(s) for '%s'",
+        "album swap scan: found %d swap(s) across %d playlist(s) for %s",
         len(swaps),
         len(playlist_ids),
-        album["name"],
+        f"'{albums[0]['name']}'" if len(albums) == 1 else f"{len(albums)} albums",
     )
     return {
-        "album": {
-            "id": album["id"],
-            "name": album["name"],
-            "artists": album["artists"],
-            "image_url": album["image_url"],
-        },
+        "albums": albums,
+        "album": albums[0] if albums else None,
         "swaps": swaps,
     }
 

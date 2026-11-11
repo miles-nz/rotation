@@ -34,6 +34,7 @@ import playlists.ranking_check as ranking_check_module
 import playlists.ranking_dismissals as ranking_dismissals_module
 import playlists.removal_history as removal_history_module
 import playlists.snapshots as snapshots_module
+import lastfm.album_switches as album_switches_module
 import lastfm.forgotten_favourites as forgotten_favourites_module
 import lastfm.lastfm_client as lastfm_client_module
 import lastfm.most_played as most_played_module
@@ -201,7 +202,15 @@ _search_job = BackgroundJob(["playlists.playlist_search", "app"])
 _prepend_job = BackgroundJob(["playlists.playlist_prepend", "app"])
 _cascade_job = BackgroundJob(["playlists.playlist_cache", "app"])
 _most_played_job = BackgroundJob(["lastfm.most_played", "lastfm.scrobble_history", "app"])
-_swap_job = BackgroundJob(["playlists.playlist_swap", "app"])
+_swap_job = BackgroundJob(
+    [
+        "playlists.playlist_swap",
+        "lastfm.album_switches",
+        "lastfm.scrobble_history",
+        "playlists.playlist_cache",
+        "app",
+    ]
+)
 _forgotten_job = BackgroundJob(
     [
         "lastfm.forgotten_favourites",
@@ -476,8 +485,40 @@ def _run_album_swap_scan(album_id: str, playlist_ids: list[str]):
     def target(cancel_check):
         sp = get_authenticated_client()
         return playlist_swap_module.find_swaps(
-            sp, album_id, playlist_ids, cancel_check=cancel_check
+            sp, [album_id], playlist_ids, cancel_check=cancel_check
         )
+
+    return target
+
+
+def _run_album_switch_detect(window: str, playlist_ids: list[str]):
+    def target(cancel_check):
+        sp = get_authenticated_client()
+        detected = album_switches_module.find_switched_albums(sp, window, cancel_check=cancel_check)
+        if detected:
+            result = playlist_swap_module.find_swaps(
+                sp, [a["id"] for a in detected], playlist_ids, cancel_check=cancel_check
+            )
+        else:
+            result = {"albums": [], "album": None, "swaps": []}
+
+        # Detection works per edition (standard and deluxe can both be
+        # detected); the scan folds editions into one family. Attach each
+        # family's switched songs, and count the families with nothing to swap.
+        families_with_swaps = {s["album_id"] for s in result["swaps"]}
+        for album in result["albums"]:
+            songs: dict[str, dict] = {}
+            for entry in detected:
+                if entry["id"] in album["edition_ids"]:
+                    for song in entry["songs"]:
+                        songs.setdefault(song["name"].lower(), song)
+            album["songs"] = list(songs.values())
+        return {
+            **result,
+            "detected": detected,
+            "other_albums": sum(1 for a in result["albums"] if a["id"] not in families_with_swaps),
+            "window_label": album_switches_module.WINDOW_LABELS[window],
+        }
 
     return target
 
@@ -572,6 +613,7 @@ def home():
     pending_review = None
     cascade_step_labels = []
     prepend_default = None
+    album_swap_default = None
     if sp is not None:
         pending_review = cascade_scheduler.load_pending_review()
         # The same steps /cascade/start-default would run, so the card only
@@ -579,6 +621,7 @@ def home():
         runnable = cascade_scheduler.canonicalize_default_cascade(_default_cascade_steps(sp) or [])
         cascade_step_labels = [_CASCADE_STEP_LABELS.get(s["type"], s["type"]) for s in runnable]
         prepend_default = _default_preferences("playlist_prepend", sp)
+        album_swap_default = _default_preferences("album_swap", sp)
     return render_template(
         "home.html",
         needs_credentials=False,
@@ -586,6 +629,10 @@ def home():
         pending_review=pending_review,
         cascade_step_labels=cascade_step_labels,
         prepend_default=prepend_default,
+        album_swap_default=album_swap_default,
+        album_swap_can_detect=_lastfm_configured(),
+        album_swap_window=album_switches_module.DEFAULT_WINDOW,
+        album_swap_window_label=album_switches_module.WINDOW_LABELS[album_switches_module.DEFAULT_WINDOW],
     )
 
 
@@ -1870,6 +1917,8 @@ def album_swap_picker():
         needs_lastfm=not _lastfm_configured(),
         logged_in=sp is not None,
         default_prefs=_default_preferences("album_swap", sp),
+        detect_windows=album_switches_module.WINDOWS,
+        default_detect_window=album_switches_module.DEFAULT_WINDOW,
     )
 
 
@@ -1956,6 +2005,33 @@ def album_swap_scan():
     )
 
 
+@app.route("/album-swap/detect")
+def album_swap_detect():
+    if not _credentials_configured() or not _lastfm_configured():
+        return redirect(url_for("album_swap_picker"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    window = request.args.get("window", album_switches_module.DEFAULT_WINDOW)
+    playlist_ids = request.args.getlist("playlist_id")
+    if window not in album_switches_module.WINDOW_LABELS or not playlist_ids:
+        return redirect(url_for("album_swap_picker"))
+
+    _swap_job.start(_run_album_switch_detect(window, playlist_ids))
+
+    return render_template(
+        "progress.html",
+        status_url=url_for("album_swap_scan_status"),
+        cancel_url=url_for("album_swap_scan_cancel"),
+        result_url=url_for("album_swap_scan_result"),
+        back_url=url_for("album_swap_picker"),
+        heading="Detecting switched albums…",
+        description="Syncing your scrobbles, finding songs you've moved from the single to the album, then scanning your playlists for those singles. The first run can take a while if your scrobble history hasn't been synced yet.",
+    )
+
+
 @app.route("/album-swap/scan/status")
 def album_swap_scan_status():
     return jsonify(_swap_job.status())
@@ -1983,7 +2059,11 @@ def album_swap_scan_result():
     return render_template(
         "album_swap_result.html",
         album=result["album"],
+        albums=result["albums"],
         swaps=result["swaps"],
+        detected=result.get("detected"),
+        other_albums=result.get("other_albums", 0),
+        window_label=result.get("window_label"),
     )
 
 
