@@ -314,6 +314,7 @@ def add_new_tracks_to_playlist(
     uris: list[str],
     existing_uris,
     track_details: list[dict] | None = None,
+    current_tracks: list[dict] | None = None,
 ) -> tuple[int, int, int]:
     """Adds uris not already in existing_uris. Returns (added, skipped,
     local_skipped).
@@ -321,7 +322,8 @@ def add_new_tracks_to_playlist(
     track_details, when the caller already has full track dicts for the
     uris being added (e.g. cascade, which keeps them in its own playlist
     cache), avoids an extra Spotify lookup when refreshing the on-disk
-    cache afterwards.
+    cache afterwards. current_tracks, the playlist's full track list when
+    the caller has just read it, likewise saves reading it again.
 
     local_skipped counts uris that matched but were never attempted: the
     Web API has no way to add a local file to a playlist at all (only read,
@@ -332,9 +334,8 @@ def add_new_tracks_to_playlist(
     local_skipped = len(not_existing) - len(to_add)
     skipped = len(uris) - len(not_existing)
 
-    current_tracks = (
-        playlist_cache_module.get_playlist(sp, playlist_id)["tracks"] if to_add else None
-    )
+    if current_tracks is None and to_add:
+        current_tracks = playlist_cache_module.get_playlist(sp, playlist_id)["tracks"]
 
     batches = list(_chunks(to_add, ADD_BATCH_SIZE))
     for i, batch in enumerate(batches, start=1):

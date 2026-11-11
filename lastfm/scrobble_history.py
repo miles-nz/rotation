@@ -264,28 +264,26 @@ def album_plays() -> list[dict]:
     ]
 
 
-def track_plays(since_ts: list[int]) -> list[dict]:
-    """Every stored track's first-ever scrobble and its play counts since
-    each timestamp in since_ts, as [{"artist", "name", "first", "plays":
-    [count per since_ts, in the same order]}, ...] - names exactly as
-    stored, so callers group spellings however they need. One pass over
-    the store however many windows are asked for."""
+def track_scrobble_times() -> list[dict]:
+    """Every stored track's scrobble timestamps, oldest first, as
+    [{"artist", "name", "times": [...]}, ...] - names exactly as stored, so
+    callers group spellings however they need, and times rather than counts
+    so they can count from any date per track (e.g. since it went into a
+    playlist), not just fixed windows. One pass over the store."""
     if not _PATH.exists():
         return []
-    sums = ", ".join("SUM(s.timestamp >= ?)" for _ in since_ts)
     with closing(_connect()) as conn:
         rows = conn.execute(
-            f"SELECT ar.name, t.name, MIN(s.timestamp){', ' + sums if sums else ''} "
+            "SELECT t.id, ar.name, t.name, s.timestamp "
             "FROM scrobbles s "
             "JOIN tracks t ON t.id = s.track_id "
             "JOIN artists ar ON ar.id = t.artist_id "
-            "GROUP BY t.id",
-            tuple(since_ts),
+            "ORDER BY t.id, s.timestamp"
         ).fetchall()
-    return [
-        {"artist": row[0], "name": row[1], "first": row[2], "plays": list(row[3:])}
-        for row in rows
-    ]
+    tracks: dict[int, dict] = {}
+    for track_id, artist, name, timestamp in rows:
+        tracks.setdefault(track_id, {"artist": artist, "name": name, "times": []})["times"].append(timestamp)
+    return list(tracks.values())
 
 
 def lookup(data: dict, artist: str, name: str) -> dict:

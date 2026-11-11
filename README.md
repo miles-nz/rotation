@@ -96,7 +96,9 @@ functions. Currently available:
   period, and every song is measured against that. A song you'd heard
   before the period moves up one ranking at a time, once it reaches 3/4
   of a typical new song's plays there; only new songs are suggested for
-  moving down. Songs at
+  moving down. Moving up only counts plays since a song went into its
+  current ranking playlist, so plays from before you moved it down don't
+  argue for moving it back. Songs at
   the bottom of the yearly playlist added in the last 30 days count as not
   ranked yet. The 100 strongest suggestions are listed, each with a
   strength meter (Mild, Moderate or Strong - it adds up how far past the

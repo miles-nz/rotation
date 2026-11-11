@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import re
+import threading
 from datetime import datetime, timezone
 from statistics import median, quantiles
 
@@ -14,6 +16,8 @@ import playlists.playlist_cache as playlist_cache_module
 import playlists.playlist_filter as playlist_filter
 
 logger = logging.getLogger(__name__)
+
+_move_lock = threading.Lock()
 
 # Ranking Check: compares the user's ranking playlists (best first, e.g.
 # "one" to "four"), their yearly playlist (ranked best to worst) and their
@@ -113,14 +117,26 @@ def period_start(key: str, now: datetime) -> int:
 
 
 def _signature(artists: str, name: str) -> tuple[str, str]:
-    # Forgotten Favourites' loose "same song" key (primary artist, title
-    # without version suffixes) - only used to match scrobbles, which have
-    # no length to tell a remix from the original by.
-    return playlist_filter._primary_artist(artists), playlist_filter._normalize_title(name)
+    # The looser key scrobbles fall back to when their exact name doesn't
+    # match: primary artist and Duplicate Finder's release title, which only
+    # strips suffixes that label the same recording ("- 2011 Remaster",
+    # "- Original Mix"). Scrobbles have no length to tell a remix from the
+    # original by, so "- Jess & Crabbe Remix" has to stay in the title -
+    # stripping every suffix credited all of a song's versions (the original
+    # included) to whichever one was in a ranking playlist.
+    return playlist_filter._primary_artist(artists), duplicates._release_title(_tidy(name))
 
 
 def _exact_key(artists: str, name: str) -> tuple[str, str]:
-    return playlist_filter._primary_artist(artists), name.strip().lower()
+    return playlist_filter._primary_artist(artists), _tidy(name).lower()
+
+
+def _tidy(name: str) -> str:
+    """name with runs of spaces collapsed and none just inside brackets -
+    scrobbles sometimes carry stray ones ("Gone ( The Pocahontas Song)")
+    that would otherwise stop them matching the playlist's spelling."""
+    name = re.sub(r"\s+", " ", name.strip())
+    return re.sub(r"\s+([\)\]])", r"\1", re.sub(r"([\(\[])\s+", r"\1", name))
 
 
 def _song_groups(tracks: list[dict]) -> dict[str, int]:
@@ -279,9 +295,12 @@ def find_inconsistencies(
                 "tier_uris": {},
                 "added_at": {},
                 "year_position": None,
+                "times": [],
                 "first_ts": None,
                 "plays": 0,
                 "plays_ytd": 0,
+                "joined_ts": None,
+                "plays_since_joined": 0,
                 "flags": [],
                 "move_tiers": [],
                 "reorder": [],
@@ -333,20 +352,26 @@ def find_inconsistencies(
         matches = by_signature.setdefault(_signature(track["artists"], track["name"]), [])
         if song not in matches:
             matches.append(song)
-    for row in scrobble_history.track_plays([start_ts, year_start_ts]):
+    for row in scrobble_history.track_scrobble_times():
         song = by_exact.get(_exact_key(row["artist"], row["name"]))
         if song is None:
             matches = by_signature.get(_signature(row["artist"], row["name"]), [])
             song = matches[0] if len(matches) == 1 else None
-        if song is None:
-            continue
-        window_plays, ytd_plays = row["plays"]
-        song["plays"] += window_plays or 0
-        song["plays_ytd"] += ytd_plays or 0
-        if song["first_ts"] is None or row["first"] < song["first_ts"]:
-            song["first_ts"] = row["first"]
+        if song is not None:
+            song["times"].extend(row["times"])
     for song in songs.values():
         song["tier"] = min(song["tier_uris"]) if song["tier_uris"] else None
+        times = song.pop("times")
+        if times:
+            song["first_ts"] = min(times)
+            song["plays"] = sum(1 for t in times if t >= start_ts)
+            song["plays_ytd"] = sum(1 for t in times if t >= year_start_ts)
+        # When it went into the ranking it's compared against - see the
+        # plays check for why moving up only counts plays from then.
+        if song["tier"] is not None:
+            song["joined_ts"] = song["added_at"].get(song["tier"])
+        since = max(start_ts, song["joined_ts"] or start_ts)
+        song["plays_since_joined"] = sum(1 for t in times if t >= since)
     check_cancelled(cancel_check)
 
     def old_enough(song: dict) -> bool:
@@ -447,6 +472,15 @@ def find_inconsistencies(
     # now" case, at a level that still means something. Only new songs are
     # suggested for moving down - an older song getting fewer plays than
     # new ones is just how listening goes, not a sign it's ranked too high.
+    #
+    # Moving up only counts plays since the song went into its current
+    # ranking playlist: that's when its ranking was decided, so plays from
+    # before - often from when it sat in a higher ranking, before being
+    # moved down - say nothing against it. Most all-time suggestions were
+    # exactly that. The scale and moving down still use plays in the
+    # period: most songs were re-added in one big re-sort, so measuring
+    # them "since joining" would collapse the scale, and a song placed
+    # recently would look under-played next to songs placed years ago.
     def is_new(song: dict) -> bool:
         return song["first_ts"] >= start_ts
 
@@ -476,41 +510,47 @@ def find_inconsistencies(
     # two rankings on the scale the plays check can't suggest anything.
     plays_check_enabled = len(scale_quartiles) >= 2
 
-    def plays_chart(plays: int, target: int) -> dict:
+    def plays_chart(plays: int, target: int, caption: str = "Plays in the period") -> dict:
         """The song's plays against a typical song from the suggested ranking."""
         return {
             "type": "plays",
             "plays": plays,
+            "caption": caption,
             "typical": {"name": tier_names[target], "plays": scale_typical[target]},
         }
 
     for song in judged:
         tier, plays = song["tier"], song["plays"]
+        up_plays = song["plays_since_joined"]
         target = tier
-        if plays >= MIN_PROMOTION_PLAYS and is_new(song):
+        if up_plays >= MIN_PROMOTION_PLAYS and is_new(song):
             # Walk up while it out-plays three quarters of the next ranking up.
-            while target > 0 and target - 1 in scale_quartiles and plays > scale_quartiles[target - 1][2]:
+            while target > 0 and target - 1 in scale_quartiles and up_plays > scale_quartiles[target - 1][2]:
                 target -= 1
-        elif plays >= MIN_PROMOTION_PLAYS and tier > 0:
+        elif up_plays >= MIN_PROMOTION_PLAYS and tier > 0:
             bar = older_bar(tier - 1)
-            if bar is not None and plays > bar:
+            if bar is not None and up_plays > bar:
                 target = tier - 1
         if target < tier:
             typical = scale_typical[target]
-            if is_new(song):
-                far_past = plays >= PLAYS_FAR_PAST * scale_quartiles[target][2]
-                text = (
-                    f"{_plural(plays, 'play')} in the period - "
-                    + (f"{_times(plays / typical)} a typical " if typical else "a typical ")
-                    + f"{tier_names[target]} {scale_label} ({typical})"
-                )
+            joined_in_period = song["joined_ts"] is not None and song["joined_ts"] > start_ts
+            if joined_in_period:
+                joined = datetime.fromtimestamp(song["joined_ts"], timezone.utc).strftime("%b %Y")
+                counted = f"since you put it in {tier_names[tier]} ({joined})"
+                caption = f"Plays since it joined {tier_names[tier]}"
             else:
-                far_past = plays >= scale_median[target]
-                text = (
-                    f"{_plural(plays, 'play')} in the period for a song you'd heard before it - "
-                    + (f"{_times(plays / typical)} a typical " if plays >= typical else "close to a typical ")
-                    + f"{tier_names[target]} {scale_label} ({typical})"
-                )
+                counted, caption = "in the period", "Plays in the period"
+            comparison = (
+                f"{_times(up_plays / typical)} a typical " if typical and up_plays >= typical
+                else "close to a typical " if typical else "a typical "
+            ) + f"{tier_names[target]} {scale_label} ({typical})"
+            if is_new(song):
+                far_past = up_plays >= PLAYS_FAR_PAST * scale_quartiles[target][2]
+                text = f"{_plural(up_plays, 'play')} {counted} - {comparison}"
+            else:
+                far_past = up_plays >= scale_median[target]
+                heard_before = "" if joined_in_period else " for a song you'd heard before it"
+                text = f"{_plural(up_plays, 'play')} {counted}{heard_before} - {comparison}"
             song["flags"].append(
                 {
                     "check": "plays",
@@ -518,7 +558,7 @@ def find_inconsistencies(
                     "tier": target,
                     "strength": tier - target,
                     "points": _points(tier - target, int(far_past)),
-                    "chart": plays_chart(plays, target),
+                    "chart": plays_chart(up_plays, target, caption),
                     "text": text,
                 }
             )
@@ -629,9 +669,13 @@ def find_inconsistencies(
                 ],
                 "tier_ids": current_ids,
                 "tier_uris": {i: list(uris) for i, uris in song["tier_uris"].items()},
+                # The song's full details from the scan, so a move can update
+                # the destination's cache without looking them up again.
+                "track": all_tracks[song["uri"]],
                 "year_position": song["year_position"],
                 "plays": song["plays"],
                 "plays_ytd": song["plays_ytd"],
+                "plays_since_joined": song["plays_since_joined"],
                 "flags": [
                     {
                         "check": f["check"],
@@ -718,19 +762,40 @@ def move_song(sp: Spotify, result: dict, tiers: list[dict], tier_index: int) -> 
     other ranking playlist it's in. Adds first, so a failed add never
     leaves the song in no ranking playlist at all; the removal is logged to
     Removal History. Returns that history entry's id (None if nothing was
-    removed)."""
+    removed).
+
+    One move at a time: the results page sends them without waiting, and
+    two moves into the same playlist at once would each save its cache
+    without the other's song."""
     if result["is_local"]:
         raise ValueError("local files can't be added to a playlist through the Web API")
     target = tiers[tier_index]
-    if tier_index not in result["tier_uris"]:
-        logger.info("adding '%s' to '%s'", result["name"], target["name"])
-        playlist_filter.add_tracks_to_playlist(sp, target["id"], [result["uri"]])
-    removals = [
-        {"playlist_id": tiers[i]["id"], "uri": uri}
-        for i, uris in result["tier_uris"].items()
-        if i != tier_index
-        for uri in uris
-    ]
-    if not removals:
-        return None
-    return duplicates.remove_from_playlists(sp, removals, source="Ranking Check")
+    with _move_lock:
+        if tier_index not in result["tier_uris"]:
+            logger.info("adding '%s' to '%s'", result["name"], target["name"])
+            track = result.get("track")
+            if track is None:
+                playlist_filter.add_tracks_to_playlist(sp, target["id"], [result["uri"]])
+            else:
+                # One read of the destination, and the scan's copy of the
+                # song for its cache, rather than add_tracks_to_playlist's
+                # second read and a details lookup - each a Spotify call.
+                current = playlist_cache_module.get_playlist(sp, target["id"])["tracks"]
+                now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                playlist_filter.add_new_tracks_to_playlist(
+                    sp,
+                    target["id"],
+                    [result["uri"]],
+                    {t["uri"] for t in current},
+                    track_details=[{**track, "added_at": now}],
+                    current_tracks=current,
+                )
+        removals = [
+            {"playlist_id": tiers[i]["id"], "uri": uri}
+            for i, uris in result["tier_uris"].items()
+            if i != tier_index
+            for uri in uris
+        ]
+        if not removals:
+            return None
+        return duplicates.remove_from_playlists(sp, removals, source="Ranking Check")

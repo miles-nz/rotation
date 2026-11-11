@@ -97,7 +97,7 @@ body { --song: #2563eb; --sev-1: #b7791f; --sev-2: #ea580c; --sev-3: #dc2626; }
 {% macro plays_bars(chart) %}
 {% set top = [chart.plays, chart.typical.plays] | max %}
 <div class="chart">
-    <div class="chart-caption">Plays in the period</div>
+    <div class="chart-caption">{{ chart.caption or 'Plays in the period' }}</div>
     <div class="pbars">
         <span class="pbar-label">Typical {{ chart.typical.name }}</span>
         <span class="pbar-track"><span class="pbar" style="width: {{ '%.1f' % (chart.typical.plays / top * 85 if top else 0) }}%"></span><span class="pbar-value">{{ chart.typical.plays }}</span></span>
@@ -209,6 +209,7 @@ body { --song: #2563eb; --sev-1: #b7791f; --sev-2: #ea580c; --sev-3: #dc2626; }
         {% endif %}
         {% if r.year_position %} · #{{ r.year_position }} in {{ year_playlist_name }}{% endif %}
         · {{ r.plays }} play{{ 's' if r.plays != 1 else '' }} in the period
+        {% if r.tiers and r.plays_since_joined is defined and r.plays_since_joined != r.plays %} · {{ r.plays_since_joined }} since it joined {{ r.tiers[0].name }}{% endif %}
         {% if period_label != 'This year' %} · {{ r.plays_ytd }} this year{% endif %}
     </div>
 
@@ -255,7 +256,7 @@ body { --song: #2563eb; --sev-1: #b7791f; --sev-2: #ea580c; --sev-3: #dc2626; }
     <div class="rank-actions">
         <button type="button" class="preview-btn" data-uri="{{ r.uri }}" title="Preview">▶</button>
         {% for m in r.moves %}
-        <form method="post" action="{{ url_for('ranking_check_move') }}">
+        <form method="post" action="{{ url_for('ranking_check_move') }}" class="move-form">
             <input type="hidden" name="key" value="{{ r.key }}" />
             {% if played_more %}<input type="hidden" name="played_more" value="1" />{% endif %}
             <input type="hidden" name="tier" value="{{ m.tier }}" />
@@ -302,10 +303,66 @@ body { --song: #2563eb; --sev-1: #b7791f; --sev-2: #ea580c; --sev-3: #dc2626; }
         });
     });
 
-    // A move takes a few seconds; stop a second click on the same song.
-    document.querySelectorAll(".rank-actions form").forEach((form) => {
+    // Stop a second click on the same song while its form is sent.
+    document.querySelectorAll(".rank-actions form:not(.move-form)").forEach((form) => {
         form.addEventListener("submit", () => {
             form.closest(".rank-actions").querySelectorAll("button").forEach((b) => (b.disabled = true));
+        });
+    });
+
+    // Moves take several seconds of Spotify calls, so they're sent without
+    // leaving the page: the card says "Moving…" and then shows the result,
+    // and other songs can be moved meanwhile (the server runs them one at a
+    // time). Without JavaScript the form still posts and comes back here.
+    document.querySelectorAll("form.move-form").forEach((form) => {
+        form.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const actions = form.closest(".rank-actions");
+            const buttons = actions.querySelectorAll("button");
+            const clicked = form.querySelector("button");
+            const label = clicked.textContent;
+            buttons.forEach((b) => (b.disabled = true));
+            clicked.textContent = "Moving…";
+            actions.querySelector(".rank-error")?.remove();
+            try {
+                const resp = await fetch(form.action, {
+                    method: "POST",
+                    body: new FormData(form),
+                    headers: { Accept: "application/json" },
+                });
+                if (resp.status === 401) {
+                    window.location = "{{ url_for('home') }}";
+                    return;
+                }
+                let data = null;
+                try {
+                    data = await resp.json();
+                } catch (_) {}
+                if (!resp.ok || !data || !data.ok) {
+                    throw new Error((data && data.error) || "Couldn't move it - try again.");
+                }
+                const status = document.createElement("p");
+                status.className = "rank-status";
+                status.textContent = "✓ " + data.status.text;
+                if (data.status.history_id) {
+                    const note = document.createElement("span");
+                    note.className = "track-meta";
+                    note.append(" - the removal is in ");
+                    const link = document.createElement("a");
+                    link.href = data.removal_history_url;
+                    link.textContent = "Removal History";
+                    note.append(link);
+                    status.append(" ", note);
+                }
+                actions.replaceWith(status);
+            } catch (err) {
+                buttons.forEach((b) => (b.disabled = false));
+                clicked.textContent = label;
+                const message = document.createElement("span");
+                message.className = "rank-error warning";
+                message.textContent = err.message;
+                actions.append(message);
+            }
         });
     });
 </script>

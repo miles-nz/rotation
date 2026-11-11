@@ -2418,17 +2418,31 @@ def ranking_check_move():
     if sp is None:
         return redirect(url_for("login"))
 
+    # The results page sends moves with fetch and updates the card in place,
+    # so it asks for JSON; a plain form post (no JavaScript) still gets
+    # sent back to the results.
+    wants_json = request.accept_mimetypes.best_match(["application/json", "text/html"]) == "application/json"
     entry = _ranking_check_entry(request.form.get("key"))
     tier = request.form.get("tier", type=int)
     move = next((m for m in entry["moves"] if m["tier"] == tier), None) if entry else None
     if entry is None or entry["status"] is not None or move is None:
+        if wants_json:
+            return jsonify({"ok": False, "error": "That song can't be moved from here - reload the results."}), 409
         return _ranking_check_back(entry)
 
     tiers = _ranking_job.result["tiers"]
-    history_id = ranking_check_module.move_song(sp, entry, tiers, tier)
+    try:
+        history_id = ranking_check_module.move_song(sp, entry, tiers, tier)
+    except Exception:
+        if not wants_json:
+            raise
+        logger.exception("ranking check: moving '%s' failed", entry["name"])
+        return jsonify({"ok": False, "error": "Spotify didn't accept the move - try again."}), 502
     verb = move["label"].split(" ", 1)[0]
     done = {"Add": "Added to", "Keep": "Now only in", "Move": "Moved to"}[verb]
     entry["status"] = {"kind": "moved", "text": f"{done} {tiers[tier]['name']}", "history_id": history_id}
+    if wants_json:
+        return jsonify({"ok": True, "status": entry["status"], "removal_history_url": url_for("removal_history")})
     return _ranking_check_back(entry)
 
 
