@@ -119,6 +119,16 @@ _CASCADE_STEP_PREF_KEYS = {
     "sync": "liked_songs_sync",
 }
 
+# Short names for cascade step types, for the homepage's one-line summary
+# of the default Cascade (cascade.html's STEP_DEFS has the full names).
+_CASCADE_STEP_LABELS = {
+    "duplicates": "Duplicates",
+    "playlist_filter": "Filter",
+    "playlist_cleanup": "Cleanup",
+    "playlist_diff": "Diff",
+    "sync": "Sync",
+}
+
 
 def _default_cascade_steps(sp):
     """The Cascade default is just an ordered list of step types, e.g.
@@ -559,12 +569,23 @@ def home():
         return render_template("home.html", needs_credentials=True)
 
     sp = get_authenticated_client()
-    pending_review = cascade_scheduler.load_pending_review() if sp is not None else None
+    pending_review = None
+    cascade_step_labels = []
+    prepend_default = None
+    if sp is not None:
+        pending_review = cascade_scheduler.load_pending_review()
+        # The same steps /cascade/start-default would run, so the card only
+        # offers Start when there's something runnable.
+        runnable = cascade_scheduler.canonicalize_default_cascade(_default_cascade_steps(sp) or [])
+        cascade_step_labels = [_CASCADE_STEP_LABELS.get(s["type"], s["type"]) for s in runnable]
+        prepend_default = _default_preferences("playlist_prepend", sp)
     return render_template(
         "home.html",
         needs_credentials=False,
         logged_in=sp is not None,
         pending_review=pending_review,
+        cascade_step_labels=cascade_step_labels,
+        prepend_default=prepend_default,
     )
 
 

@@ -2,20 +2,85 @@
 {% block title %}Rotation{% endblock %}
 {% block nav %}{% endblock %}
 {% block extra_style %}
-  .section-heading { margin: 1.5rem 0 0; padding-top: 1rem; border-top: 1px solid var(--border); font-size: 0.95rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
-  .function-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr)); gap: 0.75rem; margin: 0.75rem 0; }
-  .function-tile {
-    aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 0.5rem; text-align: center; text-decoration: none; color: inherit;
-    border: 1px solid var(--border); border-radius: 10px; padding: 0.5rem;
+  .section-heading { margin: 1.75rem 0 0.6rem; font-size: 0.8rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .home-icon { display: inline-flex; flex-shrink: 0; color: var(--accent); }
+  .home-icon svg { width: 100%; height: 100%; }
+
+  /* Primary: one card per everyday feature, with its saved default ready to run. */
+  .hero-card {
+    border: 1px solid var(--border); border-radius: 12px; padding: 1rem 1.1rem;
+    background: var(--panel-bg); margin: 0.75rem 0;
+  }
+  .hero-head { display: flex; align-items: center; gap: 0.6rem; }
+  .hero-head .home-icon { width: 28px; height: 28px; }
+  .hero-head h2 { margin: 0; font-size: 1.2rem; }
+  .hero-summary { margin: 0.5rem 0 0.9rem; color: var(--muted); line-height: 1.4; }
+  .hero-summary strong { color: var(--text); font-weight: 600; }
+  .hero-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; }
+  .hero-actions form { margin: 0; }
+  .hero-actions .button { margin-right: 0; }
+  .hero-link { color: var(--muted); font-size: 0.9rem; }
+
+  /* Secondary: the interesting-to-look-at tools. */
+  .explore-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }
+  .explore-tile {
+    display: flex; flex-direction: column; gap: 0.35rem; padding: 0.8rem 0.9rem;
+    border: 1px solid var(--border); border-radius: 10px; text-decoration: none; color: inherit;
     transition: border-color 0.15s ease, background 0.15s ease;
   }
-  .function-tile:hover, .function-tile:focus-visible { border-color: var(--tile-accent, var(--accent)); background: var(--hover-bg); }
-  .function-tile-icon { display: inline-flex; color: var(--tile-accent, var(--accent)); }
-  .function-tile-icon svg { width: 28px; height: 28px; }
-  .function-tile-label { font-size: 0.9rem; font-weight: 600; line-height: 1.2; }
+  .explore-tile:hover, .explore-tile:focus-visible { border-color: var(--accent); background: var(--hover-bg); }
+  .explore-tile .home-icon { width: 22px; height: 22px; }
+  .explore-name { font-weight: 600; line-height: 1.2; }
+  .explore-desc { font-size: 0.82rem; color: var(--muted); line-height: 1.3; }
+
+  /* Everything else: compact, always one tap away. */
+  .chip-row { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.35rem 0.75rem;
+    border: 1px solid var(--border); border-radius: 999px; font-size: 0.85rem;
+    text-decoration: none; color: inherit; transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  .chip:hover, .chip:focus-visible { border-color: var(--accent); background: var(--hover-bg); }
+  .chip .home-icon { width: 15px; height: 15px; color: var(--muted); }
+
+  .home-footer { margin-top: 2rem; }
 {% endblock %}
 {% block content %}
+  {% macro icon(name) -%}
+    {%- set paths = {
+      "cascade": '<rect x="2" y="7" width="8" height="8" rx="2" /><rect x="14" y="9" width="8" height="8" rx="2" /><path d="M10 11h4" />',
+      "prepend": '<path d="M12 5v14" /><path d="m19 12-7-7-7 7" />',
+      "most_played": '<path d="M3 3v18h18" /><path d="M7 16l4-6 3 3 5-7" />',
+      "ranking_check": '<path d="m3 16 4 4 4-4" /><path d="M7 20V4" /><path d="M11 4h10" /><path d="M11 8h7" /><path d="M11 12h4" />',
+      "forgotten_favourites": '<path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" />',
+      "listening_visuals": '<circle cx="12" cy="12" r="10" /><circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="2" />',
+      "liked_songs_sync": '<path d="M2 9.5a5.5 5.5 0 0 1 9.591-3.676.56.56 0 0 0 .818 0A5.49 5.49 0 0 1 22 9.5c0 2.29-1.5 4-3 5.5l-5.492 5.313a2 2 0 0 1-3 .019L5 15c-1.5-1.5-3-3.2-3-5.5" />',
+      "duplicates": '<line x1="12" x2="18" y1="15" y2="15" /><rect width="14" height="14" x="8" y="8" rx="2" ry="2" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />',
+      "playlist_filter": '<path d="M13.354 3H3a1 1 0 0 0-.742 1.67l7.225 7.989A2 2 0 0 1 10 14v6a1 1 0 0 0 .553.895l2 1A1 1 0 0 0 14 21v-7a2 2 0 0 1 .517-1.341l1.218-1.348" /><path d="M16 6h6" /><path d="M19 3v6" />',
+      "playlist_cleanup": '<path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /><line x1="10" x2="10" y1="11" y2="17" /><line x1="14" x2="14" y1="11" y2="17" />',
+      "playlist_diff": '<path d="m3 17 2 2 4-4" /><path d="m3 7 2 2 4-4" /><path d="M13 6h8" /><path d="M13 12h8" /><path d="M13 18h8" />',
+      "search": '<path d="m21 21-4.34-4.34" /><circle cx="11" cy="11" r="8" />',
+      "album_swap": '<path d="m17 2 4 4-4 4" /><path d="M3 11v-1a4 4 0 0 1 4-4h14" /><path d="m7 22-4-4 4-4" /><path d="M21 13v1a4 4 0 0 1-4 4H3" />',
+      "snapshots": '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" /><circle cx="12" cy="13" r="3" />',
+      "removal_history": '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /><path d="M12 7v5l4 2" />',
+      "all_playlists": '<path d="M21 15V6" /><path d="M18.5 18a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z" /><path d="M12 6H3" /><path d="M16 10H3" /><path d="M12 14H3" />',
+      "settings": '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" /><circle cx="12" cy="12" r="3" />',
+    } -%}
+    <span class="home-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{{ paths[name] | safe }}</svg></span>
+  {%- endmacro %}
+
+  {% macro explore_tile(endpoint, icon_name, name, desc, title) -%}
+    <a class="explore-tile" href="{{ url_for(endpoint) }}" title="{{ title }}">
+      {{ icon(icon_name) }}
+      <span class="explore-name">{{ name }}</span>
+      <span class="explore-desc">{{ desc }}</span>
+    </a>
+  {%- endmacro %}
+
+  {% macro chip(endpoint, icon_name, name, title) -%}
+    <a class="chip" href="{{ url_for(endpoint) }}" title="{{ title }}">{{ icon(icon_name) }}{{ name }}</a>
+  {%- endmacro %}
+
   <h1>Rotation</h1>
 
   {% if needs_credentials %}
@@ -41,83 +106,72 @@
       </div>
     {% endif %}
 
-    <p>Choose a function:</p>
+    <section class="hero-card" aria-labelledby="hero-cascade">
+      <div class="hero-head">{{ icon("cascade") }}<h2 id="hero-cascade">Cascade</h2></div>
+      {% if cascade_step_labels %}
+        <p class="hero-summary">{{ cascade_step_labels | join(" → ") }}</p>
+        <div class="hero-actions">
+          <form method="post" action="{{ url_for('cascade_start_default') }}">
+            <button class="button" type="submit">Start Cascade</button>
+          </form>
+          <a class="hero-link" href="{{ url_for('cascade_picker') }}">Edit steps</a>
+        </div>
+      {% else %}
+        <p class="hero-summary">Chain functions together, fetching each playlist only once.</p>
+        <div class="hero-actions">
+          <a class="button" href="{{ url_for('cascade_picker') }}">Open Cascade</a>
+        </div>
+      {% endif %}
+    </section>
 
-    <div class="function-grid">
-      <a class="function-tile" href="{{ url_for('liked_songs_sync') }}" title="Keep Liked Songs in sync with the union of two playlists">
-        <span class="function-tile-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9.5a5.5 5.5 0 0 1 9.591-3.676.56.56 0 0 0 .818 0A5.49 5.49 0 0 1 22 9.5c0 2.29-1.5 4-3 5.5l-5.492 5.313a2 2 0 0 1-3 .019L5 15c-1.5-1.5-3-3.2-3-5.5" /></svg></span>
-        <span class="function-tile-label">Liked Songs Sync</span>
-      </a>
-      <a class="function-tile" href="{{ url_for('duplicates_picker') }}" title="Find tracks that appear in more than one playlist and remove the extras">
-        <span class="function-tile-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" x2="18" y1="15" y2="15" /><rect width="14" height="14" x="8" y="8" rx="2" ry="2" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" /></svg></span>
-        <span class="function-tile-label">Duplicate Finder</span>
-      </a>
-      <a class="function-tile" href="{{ url_for('playlist_filter_picker') }}" title="Find tracks matching a condition and add them to another playlist">
-        <span class="function-tile-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13.354 3H3a1 1 0 0 0-.742 1.67l7.225 7.989A2 2 0 0 1 10 14v6a1 1 0 0 0 .553.895l2 1A1 1 0 0 0 14 21v-7a2 2 0 0 1 .517-1.341l1.218-1.348" /><path d="M16 6h6" /><path d="M19 3v6" /></svg></span>
-        <span class="function-tile-label">Playlist Filter</span>
-      </a>
-      <a class="function-tile" href="{{ url_for('playlist_cleanup_picker') }}" title="Remove tracks from a playlist that don't match a rule, like an added date cutoff">
-        <span class="function-tile-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /><line x1="10" x2="10" y1="11" y2="17" /><line x1="14" x2="14" y1="11" y2="17" /></svg></span>
-        <span class="function-tile-label">Playlist Cleanup</span>
-      </a>
-      <a class="function-tile" href="{{ url_for('playlist_diff_picker') }}" title="Find tracks in one or more playlists that are missing from other playlists, and add the ones you want">
-        <span class="function-tile-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 2 2 4-4" /><path d="m3 7 2 2 4-4" /><path d="M13 6h8" /><path d="M13 12h8" /><path d="M13 18h8" /></svg></span>
-        <span class="function-tile-label">Playlist Diff</span>
-      </a>
-      <a class="function-tile" href="{{ url_for('playlist_search_picker') }}" title="Search playlists with any combination of conditions and exclusions - read-only, nothing gets added or removed">
-        <span class="function-tile-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 21-4.34-4.34" /><circle cx="11" cy="11" r="8" /></svg></span>
-        <span class="function-tile-label">Playlist Search</span>
-      </a>
-      <a class="function-tile" href="{{ url_for('playlist_prepend_picker') }}" title="Add one playlist's tracks to the top of another, in order, skipping duplicates">
-        <span class="function-tile-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14" /><path d="m19 12-7-7-7 7" /></svg></span>
-        <span class="function-tile-label">Playlist Prepend</span>
-      </a>
-      <a class="function-tile" href="{{ url_for('album_swap_picker') }}" title="Find single versions of an album's tracks across your playlists and swap them for the album version, in place">
-        <span class="function-tile-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m17 2 4 4-4 4" /><path d="M3 11v-1a4 4 0 0 1 4-4h14" /><path d="m7 22-4-4 4-4" /><path d="M21 13v1a4 4 0 0 1-4 4H3" /></svg></span>
-        <span class="function-tile-label">Album Swap</span>
-      </a>
-      <a class="function-tile" href="{{ url_for('cascade_picker') }}" title="Chain functions together, fetching each playlist only once">
-        <span class="function-tile-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="8" height="8" rx="2" /><rect x="14" y="9" width="8" height="8" rx="2" /><path d="M10 11h4" /></svg></span>
-        <span class="function-tile-label">Cascade</span>
-      </a>
-      <a class="function-tile" href="{{ url_for('most_played_picker') }}" title="See your most-scrobbled tracks, artists, or albums from Last.fm, filterable and enriched with Spotify metadata">
-        <span class="function-tile-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18" /><path d="M7 16l4-6 3 3 5-7" /></svg></span>
-        <span class="function-tile-label">Most Played</span>
-      </a>
-      <a class="function-tile" href="{{ url_for('forgotten_favourites_picker') }}" title="Find tracks you've played a lot on Last.fm but not recently, and add them to a playlist">
-        <span class="function-tile-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" /></svg></span>
-        <span class="function-tile-label">Forgotten Favourites</span>
-      </a>
-      <a class="function-tile" href="{{ url_for('ranking_check_picker') }}" title="Find songs whose ranking playlist doesn't match your yearly playlist's order or how much you play them, and move them">
-        <span class="function-tile-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 16 4 4 4-4" /><path d="M7 20V4" /><path d="M11 4h10" /><path d="M11 8h7" /><path d="M11 12h4" /></svg></span>
-        <span class="function-tile-label">Ranking Check</span>
-      </a>
-      <a class="function-tile" href="{{ url_for('listening_visuals') }}" title="See your Last.fm listening history as art - when you listen, a river of your top artists, and the colour of each month">
-        <span class="function-tile-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="2" /></svg></span>
-        <span class="function-tile-label">Listening Visuals</span>
-      </a>
-      <a class="function-tile" href="{{ url_for('removal_history') }}" title="See tracks this app has removed from your playlists and put them back">
-        <span class="function-tile-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /><path d="M12 7v5l4 2" /></svg></span>
-        <span class="function-tile-label">Removal History</span>
-      </a>
-      <a class="function-tile" href="{{ url_for('snapshots_page') }}" title="Daily snapshots of your playlists and Liked Songs - see what's changed, put tracks back, or roll a playlist back">
-        <span class="function-tile-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" /><circle cx="12" cy="13" r="3" /></svg></span>
-        <span class="function-tile-label">Snapshots</span>
-      </a>
+    <section class="hero-card" aria-labelledby="hero-prepend">
+      <div class="hero-head">{{ icon("prepend") }}<h2 id="hero-prepend">Playlist Prepend</h2></div>
+      {% if prepend_default %}
+        <p class="hero-summary"><strong>{{ prepend_default.sourceName }}</strong> → <strong>{{ prepend_default.destinationName }}</strong></p>
+        <div class="hero-actions">
+          <a class="button" href="{{ url_for('playlist_prepend_scan', source_id=prepend_default.sourceId, destination_id=prepend_default.destinationId) }}">Preview prepend</a>
+          <a class="hero-link" href="{{ url_for('playlist_prepend_picker') }}">Change playlists</a>
+        </div>
+      {% else %}
+        <p class="hero-summary">Add one playlist's tracks to the top of another, in order, skipping duplicates.</p>
+        <div class="hero-actions">
+          <a class="button" href="{{ url_for('playlist_prepend_picker') }}">Open Prepend</a>
+        </div>
+      {% endif %}
+    </section>
+
+    <h2 class="section-heading">Explore</h2>
+    <div class="explore-grid">
+      {{ explore_tile("most_played_picker", "most_played", "Most Played", "Top tracks, artists and albums from Last.fm",
+                      "See your most-scrobbled tracks, artists, or albums from Last.fm, filterable and enriched with Spotify metadata") }}
+      {{ explore_tile("ranking_check_picker", "ranking_check", "Ranking Check", "Songs ranked out of step with your plays",
+                      "Find songs whose ranking playlist doesn't match your yearly playlist's order or how much you play them, and move them") }}
+      {{ explore_tile("forgotten_favourites_picker", "forgotten_favourites", "Forgotten Favourites", "Old favourites you've stopped playing",
+                      "Find tracks you've played a lot on Last.fm but not recently, and add them to a playlist") }}
+      {{ explore_tile("listening_visuals", "listening_visuals", "Listening Visuals", "Your listening history as art",
+                      "See your Last.fm listening history as art - when you listen, a river of your top artists, and the colour of each month") }}
     </div>
 
-    <h2 class="section-heading">Testing</h2>
-    <div class="function-grid">
-      <a class="function-tile" href="{{ url_for('search_page') }}" title="Search Spotify's catalog and preview any track">
-        <span class="function-tile-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 21-4.34-4.34" /><circle cx="11" cy="11" r="8" /></svg></span>
-        <span class="function-tile-label">Track Search</span>
-      </a>
-      <a class="function-tile" href="{{ url_for('all_playlists_page') }}" title="List every playlist with click-to-copy ID and name">
-        <span class="function-tile-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15V6" /><path d="M18.5 18a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z" /><path d="M12 6H3" /><path d="M16 10H3" /><path d="M12 14H3" /></svg></span>
-        <span class="function-tile-label">All Playlists</span>
-      </a>
+    <h2 class="section-heading">Cascade steps</h2>
+    <div class="chip-row">
+      {{ chip("liked_songs_sync", "liked_songs_sync", "Liked Songs Sync", "Keep Liked Songs in sync with the union of two playlists") }}
+      {{ chip("duplicates_picker", "duplicates", "Duplicate Finder", "Find tracks that appear in more than one playlist and remove the extras") }}
+      {{ chip("playlist_filter_picker", "playlist_filter", "Playlist Filter", "Find tracks matching a condition and add them to another playlist") }}
+      {{ chip("playlist_cleanup_picker", "playlist_cleanup", "Playlist Cleanup", "Remove tracks from a playlist that don't match a rule, like an added date cutoff") }}
+      {{ chip("playlist_diff_picker", "playlist_diff", "Playlist Diff", "Find tracks in one or more playlists that are missing from other playlists, and add the ones you want") }}
+      {{ chip("playlist_search_picker", "search", "Playlist Search", "Search playlists with any combination of conditions and exclusions - read-only, nothing gets added or removed") }}
+      {{ chip("album_swap_picker", "album_swap", "Album Swap", "Find single versions of an album's tracks across your playlists and swap them for the album version, in place") }}
     </div>
 
-    <p class="nav"><a href="{{ url_for('settings_page') }}">Settings</a> · <a href="{{ url_for('logout') }}">Log out</a></p>
+    <h2 class="section-heading">Admin</h2>
+    <div class="chip-row">
+      {{ chip("snapshots_page", "snapshots", "Snapshots", "Daily snapshots of your playlists and Liked Songs - see what's changed, put tracks back, or roll a playlist back") }}
+      {{ chip("removal_history", "removal_history", "Removal History", "See tracks this app has removed from your playlists and put them back") }}
+      {{ chip("search_page", "search", "Track Search", "Search Spotify's catalog and preview any track") }}
+      {{ chip("all_playlists_page", "all_playlists", "All Playlists", "List every playlist with click-to-copy ID and name") }}
+      {{ chip("settings_page", "settings", "Settings", "Tool defaults and scheduler settings") }}
+    </div>
+
+    <p class="nav home-footer"><a href="{{ url_for('logout') }}">Log out</a></p>
   {% endif %}
 {% endblock %}
