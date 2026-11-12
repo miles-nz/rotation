@@ -9,6 +9,13 @@ endblock %} {% block content %}
     }}" {% if skipped %}({{ skipped }} already there, skipped){% endif %}.
 </p>
 {% endif %}
+{% if ignored_count %}
+<p>
+    Ignored {{ ignored_count }} track{{ 's' if ignored_count != 1 else '' }} -
+    {{ 'they' if ignored_count != 1 else 'it' }} won't be suggested for "{{
+    playlist_name }}" again.
+</p>
+{% endif %}
 {% if local_skipped %}
 <p class="hint">
     {{ local_skipped }} local file{{ 's' if local_skipped != 1 else '' }}

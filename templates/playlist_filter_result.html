@@ -1,7 +1,9 @@
 {% extends "base.html" %} {% block title %}Matches - Rotation{% endblock %} {%
 block extra_style %} .version-warning { display: block; color: var(--warning);
 font-size: 0.85rem; flex-basis: 100%; margin-left: 1.6rem; }
-#version-check-summary { color: var(--warning); } {% endblock %} {% block
+#version-check-summary { color: var(--warning); } .ignore-option {
+margin-left: auto; color: var(--muted); font-size: 0.85rem; display: flex;
+align-items: center; gap: 0.3rem; cursor: pointer; } {% endblock %} {% block
 content %}
 <h1>Matches</h1>
 
@@ -9,12 +11,16 @@ content %}
 <p class="cascade-banner">
     Step {{ cascade_step }} of {{ cascade_total }} - {{ cascade_label }}
 </p>
-{% endif %} {% if not matches %} {% if already_in_destination %}
+{% endif %} {% if not matches %} {% if already_in_destination or ignored_count %}
 <p class="hint">
-    {{ already_in_destination }} track{{ 's' if already_in_destination != 1 else
-    '' }} matched your condition, but {{ 'they' if already_in_destination != 1
-    else 'it' }} already {{ 'exist' if already_in_destination != 1 else 'exists'
-    }} in "{{ destination_label }}" - nothing new to add.
+    {% if already_in_destination %}{{ already_in_destination }} track{{ 's' if
+    already_in_destination != 1 else '' }} matched your condition, but {{ 'they'
+    if already_in_destination != 1 else 'it' }} already {{ 'exist' if
+    already_in_destination != 1 else 'exists' }} in "{{ destination_label }}"{%
+    if ignored_count %}, and {% endif %}{% endif %}{% if ignored_count %}{{
+    ignored_count }} matching track{{ 's' if ignored_count != 1 else '' }} {{
+    'are' if ignored_count != 1 else 'is' }} ignored for "{{ destination_label
+    }}"{% endif %} - nothing new to add.
 </p>
 {% else %}
 <p class="hint">No tracks matched that condition.</p>
@@ -36,8 +42,11 @@ content %}
     your condition that {{ "aren't" if matches|length != 1 else "isn't" }}
     already in "{{ destination_label }}"{% if already_in_destination %} ({{
     already_in_destination }} matching track{{ 's' if already_in_destination !=
-    1 else '' }} already there, excluded){% endif %}. {% endif %} Uncheck any
-    you don't want to add.
+    1 else '' }} already there, excluded){% endif %}{% if ignored_count %} ({{
+    ignored_count }} ignored for this playlist, hidden){% endif %}. {% endif %}
+    Uncheck any you don't want to add{% if destination_mode == 'existing' %}, or
+    tick "Ignore" to stop {{ 'them' if matches|length != 1 else 'it' }} being
+    suggested for "{{ destination_label }}" in future{% endif %}.
 </p>
 
 {% if similar_versions %}
@@ -68,6 +77,11 @@ content %}
             <span class="track-meta">{{ track.duration_ms | duration }}</span>
             {% endif %} {% if track.genres %}
             <span class="track-meta">{{ track.genres | join(', ') }}</span>
+            {% endif %} {% if destination_mode == 'existing' %}
+            <span class="ignore-option">
+                <input type="checkbox" name="ignore" value="{{ track.uri }}" />
+                Ignore
+            </span>
             {% endif %} {% if track.uri in similar_versions %}
             <span class="version-warning">
                 ⚠ possibly already in "{{ destination_label }}" as a different
@@ -95,13 +109,35 @@ content %}
     (function () {
         const submitButton = document.getElementById("apply-submit");
         const checkboxes = document.querySelectorAll('input[name="track"]');
+        const ignores = document.querySelectorAll('input[name="ignore"]');
         function updateLabel() {
             const anyChecked = Array.from(checkboxes).some((c) => c.checked);
+            const anyIgnored = Array.from(ignores).some((c) => c.checked);
             submitButton.textContent = anyChecked
                 ? "Add to playlist"
-                : "Continue without adding";
+                : anyIgnored
+                  ? "Save"
+                  : "Continue without adding";
         }
         checkboxes.forEach((c) => c.addEventListener("change", updateLabel));
+        // Ignoring and adding are either/or for a track. The ignore box sits
+        // inside the row's <label>, so stop its click from also toggling the
+        // add box.
+        ignores.forEach((ignore) => {
+            ignore.closest(".ignore-option").addEventListener("click", (e) => {
+                if (e.target !== ignore) {
+                    e.preventDefault();
+                    ignore.click();
+                }
+            });
+            ignore.addEventListener("click", (e) => e.stopPropagation());
+            ignore.addEventListener("change", () => {
+                const add = ignore.closest(".match").querySelector('input[name="track"]');
+                if (ignore.checked) add.checked = false;
+                add.disabled = ignore.checked;
+                updateLabel();
+            });
+        });
         updateLabel();
     })();
 </script>

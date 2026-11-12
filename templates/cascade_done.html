@@ -18,7 +18,9 @@
         s.playlist_name }}"{% if s.skipped %} ({{ s.skipped }} already
         there){% endif %}{% if s.local_skipped %} ({{ s.local_skipped }} local
         file{{ 's' if s.local_skipped != 1 else '' }} skipped - Spotify's API
-        doesn't support adding local files to a playlist){% endif %}{% endif %} {% elif
+        doesn't support adding local files to a playlist){% endif %}{% endif %}{% if
+        s.ignored %}, ignored {{ s.ignored }} track{{ 's' if s.ignored != 1 else
+        '' }} for future runs{% endif %} {% elif
         s.type == 'playlist_cleanup' %} removed {{ s.removed }} track{{ 's' if
         s.removed != 1 else '' }} from "{{ s.playlist_name }}" {% elif s.type
         == 'playlist_diff' %} {% if s.added_summary %} added tracks to: {% for

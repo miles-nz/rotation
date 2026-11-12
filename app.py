@@ -23,6 +23,7 @@ import playlists.cascade as cascade_module
 import playlists.diff_snoozes as diff_snoozes_module
 import playlists.duplicates as duplicates_module
 import playlists.not_duplicates as not_duplicates_module
+import playlists.filter_ignores as filter_ignores_module
 import playlists.playlist_cache as playlist_cache_module
 import playlists.playlist_filter as playlist_filter_module
 import playlists.playlist_cleanup as playlist_cleanup_module
@@ -344,12 +345,14 @@ def _run_playlist_filter_scan(
                 matches, destination_tracks
             )
 
-        return {
-            "matches": matches,
-            "already_in_destination": already_in_destination,
-            "similar_versions": similar_versions,
-            **destination,
-        }
+        return filter_ignores_module.apply_to_scan(
+            {
+                "matches": matches,
+                "already_in_destination": already_in_destination,
+                "similar_versions": similar_versions,
+                **destination,
+            }
+        )
 
     return target
 
@@ -570,6 +573,7 @@ def _cascade_step_view(sp: Spotify, run: cascade_module.CascadeRun):
             "destination_label": destination_label,
             "destination_mode": result["destination_mode"],
             "already_in_destination": result["already_in_destination"],
+            "ignored_count": result.get("ignored_count", 0),
             "similar_versions": result.get("similar_versions", {}),
             **banner,
         }
@@ -1107,6 +1111,7 @@ def playlist_filter_picker():
         logged_in=sp is not None,
         default_prefs=_default_preferences("playlist_filter", sp),
         field_operators=playlist_filter_module.FIELD_OPERATORS,
+        filter_ignores=filter_ignores_module.list_active() if sp is not None else [],
     )
 
 
@@ -1205,6 +1210,7 @@ def playlist_filter_scan_result():
         destination_label=destination_label,
         destination_mode=result["destination_mode"],
         already_in_destination=result["already_in_destination"],
+        ignored_count=result.get("ignored_count", 0),
         similar_versions=result.get("similar_versions", {}),
     )
 
@@ -1222,7 +1228,8 @@ def playlist_filter_apply():
     if result is None:
         return redirect(url_for("playlist_filter_picker"))
 
-    match_uris = {m["uri"] for m in result["matches"]}
+    ignored_count, ignored = filter_ignores_module.ignore_from_form(result, request.form)
+    match_uris = {m["uri"] for m in result["matches"]} - ignored
     selected_uris = [uri for uri in request.form.getlist("track") if uri in match_uris]
 
     if not selected_uris:
@@ -1251,8 +1258,25 @@ def playlist_filter_apply():
         added=added,
         skipped=skipped,
         local_skipped=local_skipped,
+        ignored_count=ignored_count,
         playlist_name=playlist_name,
     )
+
+
+@app.route("/playlist-filter/unignore", methods=["POST"])
+def playlist_filter_unignore():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    playlist_id = request.form.get("playlist_id")
+    uri = request.form.get("uri")
+    if playlist_id and uri:
+        filter_ignores_module.unignore(playlist_id, uri)
+    return redirect(url_for("playlist_filter_picker"))
 
 
 # --- Playlist Cleanup ---------------------------------------------------

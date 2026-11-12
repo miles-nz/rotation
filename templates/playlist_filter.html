@@ -107,6 +107,31 @@
     </p>
 </div>
 
+{% if filter_ignores %}
+<h2>Ignored songs</h2>
+<p class="hint">
+    You chose not to have these suggested for a playlist again. Un-ignore one
+    to have it suggested again.
+</p>
+<ul>
+    {% for t in filter_ignores %}
+    <li>
+        {{ t.artists }} – {{ t.name }}
+        <span class="track-meta">for "{{ t.playlist_name }}"</span>
+        <form
+            method="post"
+            action="{{ url_for('playlist_filter_unignore') }}"
+            style="display: inline"
+        >
+            <input type="hidden" name="playlist_id" value="{{ t.playlist_id }}" />
+            <input type="hidden" name="uri" value="{{ t.uri }}" />
+            <button class="button secondary" type="submit">Un-ignore</button>
+        </form>
+    </li>
+    {% endfor %}
+</ul>
+{% endif %}
+
 <script src="{{ url_for('static', filename='playlist_picker.js') }}"></script>
 <script src="{{ url_for('static', filename='saved_defaults.js') }}"></script>
 <script src="{{ url_for('static', filename='criteria_builder.js') }}"></script>

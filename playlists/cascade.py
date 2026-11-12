@@ -10,6 +10,7 @@ from core.cancellation import CancelCheck
 from playlists.playlist_cache import PlaylistCache
 import playlists.diff_snoozes as diff_snoozes_module
 import playlists.duplicates as duplicates_module
+import playlists.filter_ignores as filter_ignores_module
 import playlists.not_duplicates as not_duplicates_module
 import playlists.playlist_filter as playlist_filter_module
 import playlists.playlist_cleanup as playlist_cleanup_module
@@ -95,15 +96,17 @@ def scan_step(cache: PlaylistCache, step: dict) -> Any:
             similar_versions = playlist_filter_module.find_similar_versions(
                 matches, destination_tracks
             )
-        return {
-            "matches": matches,
-            "already_in_destination": already_in_destination,
-            "similar_versions": similar_versions,
-            "destination_mode": step["destination_mode"],
-            "destination_playlist_id": step.get("destination_playlist_id"),
-            "destination_playlist_name": step.get("destination_playlist_name"),
-            "destination_name": step.get("destination_name"),
-        }
+        return filter_ignores_module.apply_to_scan(
+            {
+                "matches": matches,
+                "already_in_destination": already_in_destination,
+                "similar_versions": similar_versions,
+                "destination_mode": step["destination_mode"],
+                "destination_playlist_id": step.get("destination_playlist_id"),
+                "destination_playlist_name": step.get("destination_playlist_name"),
+                "destination_name": step.get("destination_name"),
+            }
+        )
 
     if step_type == "playlist_cleanup":
         playlist = cache.playlist(step["playlist_id"])
@@ -156,7 +159,8 @@ def apply_step(sp: Spotify, cache: PlaylistCache, step: dict, result: Any, form)
         return {"type": step_type, "label": label, "removed": len(removals), "marked": marked}
 
     if step_type == "playlist_filter":
-        match_uris = {m["uri"] for m in result["matches"]}
+        ignored_count, ignored = filter_ignores_module.ignore_from_form(result, form)
+        match_uris = {m["uri"] for m in result["matches"]} - ignored
         selected_uris = [uri for uri in form.getlist("track") if uri in match_uris]
 
         if not selected_uris:
@@ -167,6 +171,7 @@ def apply_step(sp: Spotify, cache: PlaylistCache, step: dict, result: Any, form)
                 "added": 0,
                 "skipped": 0,
                 "local_skipped": 0,
+                "ignored": ignored_count,
                 "playlist_name": result["destination_name"]
                 if result["destination_mode"] == "new"
                 else result["destination_playlist_name"],
@@ -196,6 +201,7 @@ def apply_step(sp: Spotify, cache: PlaylistCache, step: dict, result: Any, form)
             "added": added,
             "skipped": skipped,
             "local_skipped": local_skipped,
+            "ignored": ignored_count,
             "playlist_name": playlist_name,
         }
 
