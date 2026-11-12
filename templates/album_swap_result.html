@@ -1,35 +1,68 @@
 {% extends "base.html" %}
 {% block title %}Album Swap Results - Rotation{% endblock %}
 {% block extra_style %}
-.swap-row { display: flex; align-items: center; gap: 0.75rem; border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem; margin: 0.75rem 0; }
-.swap-details { flex: 1; }
-.swap-playlist { font-size: 0.8rem; color: var(--muted); margin-bottom: 0.25rem; }
+.swap-row { display: flex; align-items: flex-start; gap: 0.75rem; border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem; margin: 0.75rem 0; }
+.swap-row > input { margin-top: 0.3rem; }
+.swap-details { flex: 1; min-width: 0; }
+.swap-head { line-height: 1.3; }
 .swap-track { font-weight: 600; }
-.swap-arrow { color: var(--muted); margin: 0 0.4rem; }
+.swap-artists { color: var(--muted); }
+.swap-playlist { font-size: 0.8rem; color: var(--muted); margin-top: 0.15rem; }
+.swap-versions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; margin-top: 0.6rem; }
+.version { display: flex; align-items: center; gap: 0.6rem; flex: 1 1 13rem; min-width: 0; padding: 0.45rem 0.55rem; border: 1px solid var(--border); border-radius: 6px; }
+.version img, .version .no-art { width: 2.75rem; height: 2.75rem; border-radius: 4px; object-fit: cover; background: var(--thumb-bg); flex-shrink: 0; }
+.version-text { min-width: 0; font-size: 0.85rem; line-height: 1.3; }
+.version-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.version-name { font-weight: 600; }
+.version-meta { color: var(--muted); }
+.version.to { border-color: var(--accent); }
+.version.to .version-label { color: var(--accent); }
+.swap-arrow { color: var(--muted); font-size: 1.1rem; }
+@media (max-width: 600px) {
+  .swap-versions { flex-direction: column; align-items: stretch; gap: 0.3rem; }
+  .version { flex: none; }
+  .swap-arrow { align-self: center; transform: rotate(90deg); }
+}
 .select-all-row { display: flex; align-items: center; gap: 0.5rem; margin: 0.75rem 0; }
 .album-group { margin-top: 1.75rem; }
 .album-group-header { display: flex; align-items: center; gap: 0.75rem; }
 .album-group-header img { width: 3.5rem; height: 3.5rem; border-radius: 4px; object-fit: cover; background: var(--thumb-bg); flex-shrink: 0; }
 .album-group-songs { font-size: 0.85rem; color: var(--muted); margin-top: 0.2rem; }
 .detected-list { margin: 0.5rem 0 1rem 1.25rem; }
-.edition-tag { display: inline-block; font-size: 0.75rem; font-weight: 400; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 0 0.5rem; margin-left: 0.4rem; vertical-align: middle; }
 .editions-note { font-size: 0.8rem; color: var(--muted); margin-top: 0.2rem; }
 {% endblock %}
 {% block content %}
 <h1>Album Swap</h1>
 
+{% macro version(label, cls, release, track_name, show_track) %}
+<div class="version {{ cls }}">
+    {% if release and release.image_url %}<img src="{{ release.image_url }}" alt="" />{% else %}<span class="no-art"></span>{% endif %}
+    <div class="version-text">
+        <div class="version-label">{{ label }}</div>
+        {% if release %}
+        <div class="version-name">{{ release.name }}</div>
+        <div class="version-meta">{{ release.kind }}{% if release.year %} · {{ release.year }}{% endif %}{% if show_track %} · “{{ track_name }}”{% endif %}</div>
+        {% else %}
+        <div class="version-name">“{{ track_name }}”</div>
+        {% endif %}
+    </div>
+</div>
+{% endmacro %}
+
 {% macro swap_row(swap) %}
+{% set renamed = swap.single.name != swap.album_track.name %}
 <div class="swap-row">
     <input type="checkbox" name="swap_id" value="{{ swap.id }}" checked />
     <div class="swap-details">
-        <div class="swap-playlist">
-            "{{ swap.playlist_name }}", position {{ swap.position + 1 }}
+        <div class="swap-head">
+            <span class="swap-track">{{ swap.album_track.name }}</span>
+            <span class="swap-artists">· {{ swap.single.artists }}</span>
         </div>
-        <div class="swap-track">
-            {{ swap.single.artists }} – {{ swap.single.name }}
-            <span class="swap-arrow">→</span>
-            {{ swap.album_track.name }}
-            {% if swap.edition %}<span class="edition-tag" title="Only on this edition, so it goes here rather than the original">{{ swap.edition.name }}</span>{% endif %}
+        <div class="swap-playlist">In "{{ swap.playlist_name }}", position {{ swap.position + 1 }}</div>
+        <div class="swap-versions">
+            {{ version("In the playlist now", "from", swap.from_release, swap.single.name, renamed) }}
+            <span class="swap-arrow" aria-label="swap to">→</span>
+            {{ version("Swap to", "to", swap.to_release, swap.album_track.name, renamed) }}
         </div>
     </div>
 </div>

@@ -142,6 +142,39 @@ def get_album_family(
     return {"editions": editions, "by_signature": by_signature, "uris": uris}
 
 
+def _release_kind(album: dict) -> str:
+    """A label for what kind of release a track is on, as the review
+    screen shows it. Spotify files EPs under album_type "single" too, so
+    those are told apart by length: up to 3 tracks is a single."""
+    album_type = album.get("album_type")
+    if album_type == "single":
+        return "Single" if (album.get("total_tracks") or 0) <= 3 else "EP"
+    return {"album": "Album", "compilation": "Compilation"}.get(album_type, "Release")
+
+
+def _releases_for_tracks(sp: Spotify, uris: list[str]) -> dict[str, dict]:
+    """The release each track uri is on, as {uri: {"name", "kind", "year",
+    "image_url"}} - for showing which version a swap replaces. Playlist
+    cache tracks only carry the album's name, not its type or art, so this
+    looks the (usually few) swap candidates up directly, 50 at a time."""
+    releases: dict[str, dict] = {}
+    unique = list(dict.fromkeys(uris))
+    for i in range(0, len(unique), 50):
+        batch = [uri.split(":")[-1] for uri in unique[i : i + 50]]
+        for track in sp.tracks(batch)["tracks"]:
+            if not track:
+                continue
+            album = track.get("album") or {}
+            images = album.get("images") or []
+            releases[track["uri"]] = {
+                "name": album.get("name") or "",
+                "kind": _release_kind(album),
+                "year": (album.get("release_date") or "")[:4],
+                "image_url": images[-1]["url"] if images else None,
+            }
+    return releases
+
+
 def find_swaps(
     sp: Spotify,
     album_ids: list[str],
@@ -176,10 +209,14 @@ def find_swaps(
              "swaps": [{"id", "album_id", "playlist_id", "playlist_name",
                         "position", "single": {"uri","name","artists"},
                         "album_track": {"uri","name","artists"},
-                        "edition": {"id","name"} or None}, ...]}
+                        "edition": {"id","name"} or None,
+                        "from_release"/"to_release": {"name", "kind",
+                            "year", "image_url"}}, ...]}
     One entry in "albums" per family, shown as its earliest edition; a
     swap's "album_id" is that family's id, and "edition" is set when the
-    swap goes to a later edition rather than that one. "id"
+    swap goes to a later edition rather than that one. "from_release" is
+    the release the playlist's current version is on (None if Spotify
+    didn't return it) and "to_release" the edition it'll be swapped to. "id"
     (f"{playlist_id}:{position}") is a stable per-row key used to
     round-trip which swaps the user confirmed on the review screen - the
     apply step re-reads this same result from server memory rather than
@@ -244,9 +281,43 @@ def find_swaps(
                         if edition["id"] != family_id
                         else None
                     ),
+                    "to_release": {
+                        "name": edition["name"],
+                        "kind": "Album",
+                        "year": edition["release_date"][:4],
+                        "image_url": edition["image_url"],
+                    },
                 }
             )
         check_cancelled(cancel_check)
+
+    from_releases = _releases_for_tracks(sp, [s["single"]["uri"] for s in swaps])
+    for swap in swaps:
+        swap["from_release"] = from_releases.get(swap["single"]["uri"])
+
+    # Spotify keeps old copies of some albums under separate ids that the
+    # artist's album list doesn't return, so a playlist track can be on
+    # "the same album" without its uri being on any edition found above.
+    # That's already the album version - nothing to swap.
+    edition_names = {a["id"]: [e["name"] for e in a["editions"]] for a in albums}
+    kept = [
+        s
+        for s in swaps
+        if not (
+            s["from_release"]
+            and s["from_release"]["kind"] == "Album"
+            and any(
+                _titles_could_be_editions(s["from_release"]["name"], name)
+                for name in edition_names[s["album_id"]]
+            )
+        )
+    ]
+    if len(kept) < len(swaps):
+        logger.info(
+            "album swap scan: skipped %d track(s) already on another copy of the album",
+            len(swaps) - len(kept),
+        )
+    swaps = kept
 
     logger.info(
         "album swap scan: found %d swap(s) across %d playlist(s) for %s",
