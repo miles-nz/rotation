@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import date, datetime, timezone
 
 from spotipy import Spotify
 
@@ -142,6 +143,54 @@ def get_album_family(
     return {"editions": editions, "by_signature": by_signature, "uris": uris}
 
 
+# A later edition only gets a song when that edition is close in time to
+# the single - a deluxe adding recent songs. A reissue years later that
+# happens to include an old single (or a remix of it) doesn't count: the
+# single stays.
+_MAX_YEARS_SINGLE_BEFORE_EDITION = 4
+
+# Words that mark a track title's suffix as a version of the song (a remix,
+# rework, live take...) rather than part of its name, e.g. the "Flume
+# Re-work" in "Gold - Flume Re-work" or "Gold (Flume Re-work)".
+_VERSION_WORDS_RE = re.compile(
+    r"\b(re-?mix|mix|re-?work|edit|version|live|acoustic|remaster(ed)?|demo|"
+    r"instrumental|vip|flip|bootleg|reprise|stripped|unplugged|dub|session|cover)\b",
+    re.IGNORECASE,
+)
+_DASH_SUFFIX_RE = re.compile(r"^(.+?)\s+-\s+(.+)$")
+_BRACKET_SUFFIX_RE = re.compile(r"^(.+?)\s*[(\[]([^()\[\]]+)[)\]]\s*$")
+
+
+def track_version(name: str) -> tuple[str, str | None]:
+    """Splits a track title into (song title, version label), e.g.
+    "Gold - Flume Re-work" -> ("Gold", "Flume Re-work"). The label is None
+    when the title doesn't carry a version suffix ("feat." brackets and
+    other suffixes are left in the title)."""
+    for pattern in (_DASH_SUFFIX_RE, _BRACKET_SUFFIX_RE):
+        match = pattern.match(name)
+        if match and _VERSION_WORDS_RE.search(match.group(2)):
+            return match.group(1).strip(), match.group(2).strip()
+    return name, None
+
+
+def _release_day(release_date: str | None) -> date | None:
+    """Spotify release dates come as "YYYY", "YYYY-MM" or "YYYY-MM-DD";
+    a missing month or day counts as the first."""
+    parts = (release_date or "").split("-")
+    try:
+        return date(int(parts[0]), int(parts[1]) if len(parts) > 1 else 1, int(parts[2]) if len(parts) > 2 else 1)
+    except (ValueError, IndexError):
+        return None
+
+
+def _years_apart_more_than(earlier: date, later: date, years: int) -> bool:
+    try:
+        cutoff = later.replace(year=later.year - years)
+    except ValueError:  # 29 February
+        cutoff = later.replace(year=later.year - years, day=28)
+    return earlier < cutoff
+
+
 def _release_kind(album: dict) -> str:
     """A label for what kind of release a track is on, as the review
     screen shows it. Spotify files EPs under album_type "single" too, so
@@ -170,6 +219,7 @@ def _releases_for_tracks(sp: Spotify, uris: list[str]) -> dict[str, dict]:
                 "name": album.get("name") or "",
                 "kind": _release_kind(album),
                 "year": (album.get("release_date") or "")[:4],
+                "release_date": album.get("release_date") or "",
                 "image_url": images[-1]["url"] if images else None,
             }
     return releases
@@ -207,14 +257,18 @@ def find_swaps(
                          "editions": [{"id","name","release_date"}, ...]}, ...],
              "album": the first of "albums",
              "swaps": [{"id", "album_id", "playlist_id", "playlist_name",
-                        "position", "single": {"uri","name","artists"},
+                        "position", "title", "version",
+                        "single": {"uri","name","artists"},
                         "album_track": {"uri","name","artists"},
                         "edition": {"id","name"} or None,
                         "from_release"/"to_release": {"name", "kind",
                             "year", "image_url"}}, ...]}
     One entry in "albums" per family, shown as its earliest edition; a
     swap's "album_id" is that family's id, and "edition" is set when the
-    swap goes to a later edition rather than that one. "from_release" is
+    swap goes to a later edition rather than that one - skipped when the
+    single came out more than _MAX_YEARS_SINGLE_BEFORE_EDITION years before
+    that edition. "title"/"version" split the song's name from a version
+    label like "Flume Re-work" (None for the original). "from_release" is
     the release the playlist's current version is on (None if Spotify
     didn't return it) and "to_release" the edition it'll be swapped to. "id"
     (f"{playlist_id}:{position}") is a stable per-row key used to
@@ -263,6 +317,9 @@ def find_swaps(
             if match is None:
                 continue
             family_id, edition, album_track = match
+            title, version = track_version(track["name"])
+            if version is None:
+                title, version = track_version(album_track["name"])
             swaps.append(
                 {
                     "id": f"{playlist_id}:{position}",
@@ -270,6 +327,8 @@ def find_swaps(
                     "playlist_id": playlist_id,
                     "playlist_name": playlist["name"],
                     "position": position,
+                    "title": title,
+                    "version": version,
                     "single": {
                         "uri": track["uri"],
                         "name": track["name"],
@@ -285,6 +344,7 @@ def find_swaps(
                         "name": edition["name"],
                         "kind": "Album",
                         "year": edition["release_date"][:4],
+                        "release_date": edition["release_date"],
                         "image_url": edition["image_url"],
                     },
                 }
@@ -319,6 +379,30 @@ def find_swaps(
         )
     swaps = kept
 
+    # A later edition released long after the single (an anniversary
+    # reissue with bonus tracks, say) isn't where the song first came out
+    # on an album in any meaningful sense - keep the single.
+    kept = []
+    for s in swaps:
+        single_day = _release_day((s["from_release"] or {}).get("release_date"))
+        edition_day = _release_day(s["to_release"]["release_date"])
+        if (
+            s["edition"]
+            and single_day
+            and edition_day
+            and _years_apart_more_than(single_day, edition_day, _MAX_YEARS_SINGLE_BEFORE_EDITION)
+        ):
+            logger.info(
+                "album swap scan: kept the single of '%s' - it came out more than %d years "
+                "before '%s'",
+                s["single"]["name"],
+                _MAX_YEARS_SINGLE_BEFORE_EDITION,
+                s["to_release"]["name"],
+            )
+            continue
+        kept.append(s)
+    swaps = kept
+
     logger.info(
         "album swap scan: found %d swap(s) across %d playlist(s) for %s",
         len(swaps),
@@ -332,18 +416,104 @@ def find_swaps(
     }
 
 
+# Spotify's playlist write endpoints take at most 100 tracks per request.
+_MAX_ITEMS_PER_REQUEST = 100
+
+
+def _position_runs(slots: list[tuple[int, str]]) -> list[list[tuple[int, str]]]:
+    """Splits (position, uri) slots, sorted by position, into runs of
+    consecutive positions, so each run can go back in one insert call."""
+    runs: list[list[tuple[int, str]]] = []
+    for slot in slots:
+        if runs and slot[0] == runs[-1][-1][0] + 1:
+            runs[-1].append(slot)
+        else:
+            runs.append([slot])
+    return runs
+
+
+def _apply_playlist_swaps(
+    sp: Spotify, playlist_id: str, current_uris: list[str], swaps: list[dict]
+) -> tuple[list[dict], list[int]]:
+    """Swaps singles for album tracks in one playlist with as few requests
+    as possible, while every other track keeps its position. current_uris
+    is the playlist's track list as it is now. Returns the swaps applied
+    and the positions of other copies of a single that were re-added.
+
+    Spotify's remove endpoint ignores positions and drops every copy of a
+    uri, so a single can't be removed from just one spot. Instead, for up
+    to 100 singles at a time, one request removes them outright, then
+    every position that emptied goes back in ascending order, one insert
+    per run of consecutive positions: the album track where it's a swap,
+    and the single itself where it's another copy that isn't being
+    swapped (that copy's added date resets, unavoidably). Inserting in
+    ascending order puts each track back at its original index, because
+    everything before it is already restored, and each chunk leaves the
+    playlist whole again, so the next chunk's positions still hold.
+
+    Removing and restoring per chunk (not all removals first) keeps the
+    window where tracks are missing to a single chunk if a request fails
+    midway."""
+    applied: list[dict] = []
+    readded: list[int] = []
+    replacement_at: dict[int, str] = {}
+    for swap in swaps:
+        position = swap["position"]
+        if position < len(current_uris) and current_uris[position] == swap["single"]["uri"]:
+            replacement_at[position] = swap["album_track"]["uri"]
+            applied.append(swap)
+        else:
+            logger.warning(
+                "playlist %s: skipped swapping '%s' - it's no longer at position %d "
+                "(the playlist changed since the scan)",
+                playlist_id,
+                swap["single"]["name"],
+                position + 1,
+            )
+
+    singles = list(dict.fromkeys(s["single"]["uri"] for s in applied))
+    for i in range(0, len(singles), _MAX_ITEMS_PER_REQUEST):
+        chunk = set(singles[i : i + _MAX_ITEMS_PER_REQUEST])
+        slots = [
+            (position, replacement_at.get(position, uri))
+            for position, uri in enumerate(current_uris)
+            if uri in chunk
+        ]
+        readded.extend(position for position, _ in slots if position not in replacement_at)
+
+        sp.playlist_remove_all_occurrences_of_items(playlist_id, list(chunk))
+
+        restored = 0
+        try:
+            for run in _position_runs(slots):
+                for j in range(0, len(run), _MAX_ITEMS_PER_REQUEST):
+                    part = run[j : j + _MAX_ITEMS_PER_REQUEST]
+                    sp.playlist_add_items(playlist_id, [uri for _, uri in part], position=part[0][0])
+                    restored += len(part)
+        except Exception:
+            logger.error(
+                "playlist %s: removed tracks but failed to put them all back - "
+                "these need re-adding by hand: %s",
+                playlist_id,
+                ", ".join(f"{uri} at position {position + 1}" for position, uri in slots[restored:]),
+            )
+            raise
+
+    for swap in applied:
+        logger.info(
+            "playlist %s: swapped '%s' for '%s' at position %d",
+            playlist_id,
+            swap["single"]["name"],
+            swap["album_track"]["name"],
+            swap["position"],
+        )
+    return applied, readded
+
+
 def apply_swaps(sp: Spotify, swaps: list[dict]) -> dict[str, dict]:
-    """swaps: the confirmed subset of find_swaps()'s "swaps" list. Per
-    playlist, removes each swap's single by its exact recorded position
-    (playlist_remove_specific_occurrences_of_items - not
-    remove_all_occurrences, since only that one occurrence should go) and
-    immediately re-inserts the album track at that same position, one swap
-    at a time. Removing and reinserting at the same index is a net-zero
-    shift for every other track in the playlist, so swaps within one
-    playlist can be issued in any order without recomputing positions - but
-    each removal MUST be immediately followed by its own insertion before
-    moving to the next swap; batching all removals first would let
-    positions drift between the two passes.
+    """swaps: the confirmed subset of find_swaps()'s "swaps" list. Replaces
+    each swap's single with its album track at the same position, batching
+    the requests per playlist (see _apply_playlist_swaps).
 
     Returns {playlist_id: {"playlist_name", "swapped": n}}.
     """
@@ -356,25 +526,16 @@ def apply_swaps(sp: Spotify, swaps: list[dict]) -> dict[str, dict]:
 
     summary: dict[str, dict] = {}
     for playlist_id, playlist_swaps in by_playlist.items():
+        playlist_name = playlist_swaps[0]["playlist_name"]
         current_tracks = playlist_cache_module.get_playlist(sp, playlist_id)["tracks"]
+        playlist_swaps, readded = _apply_playlist_swaps(
+            sp, playlist_id, [t["uri"] for t in current_tracks], playlist_swaps
+        )
+        summary[playlist_id] = {"playlist_name": playlist_name, "swapped": len(playlist_swaps)}
+        if not playlist_swaps:
+            continue
 
-        for swap in playlist_swaps:
-            sp.playlist_remove_specific_occurrences_of_items(
-                playlist_id,
-                [{"uri": swap["single"]["uri"], "positions": [swap["position"]]}],
-            )
-            sp.playlist_add_items(
-                playlist_id, [swap["album_track"]["uri"]], position=swap["position"]
-            )
-            logger.info(
-                "playlist %s: swapped '%s' for '%s' at position %d",
-                playlist_id,
-                swap["single"]["name"],
-                swap["album_track"]["name"],
-                swap["position"],
-            )
-
-        # The removal/insertion pairs above already succeeded; nothing from
+        # The removals and insertions above already succeeded; nothing from
         # here on should turn into an exception that makes it look like the
         # swap failed. Worst case the cache stays stale until it
         # self-corrects on the next read (snapshot_id won't match).
@@ -384,6 +545,9 @@ def apply_swaps(sp: Spotify, swaps: list[dict]) -> dict[str, dict]:
                 details = album_track_details.get(swap["album_track"]["uri"])
                 if details:
                     new_tracks[swap["position"]] = details
+            now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            for position in readded:
+                new_tracks[position] = {**new_tracks[position], "added_at": now}
             playlist_cache_module.refresh_after_mutation(sp, playlist_id, new_tracks)
         except Exception:
             logger.warning(
@@ -392,10 +556,5 @@ def apply_swaps(sp: Spotify, swaps: list[dict]) -> dict[str, dict]:
                 playlist_id,
                 exc_info=True,
             )
-
-        summary[playlist_id] = {
-            "playlist_name": playlist_swaps[0]["playlist_name"],
-            "swapped": len(playlist_swaps),
-        }
 
     return summary
