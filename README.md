@@ -81,6 +81,15 @@ functions. Currently available:
   listed separately. The first run downloads your full Last.fm listening
   history (see Listening history below), which takes about 20 minutes.
   Requires Last.fm to be configured (see Setup).
+- **Old Songs on Repeat** - the songs you've played most in a year (the
+  current one by default) that were released before it. Pick the year, how
+  many songs to show (top 50 by default) and, optionally, a minimum play
+  count. An optional checkbox keeps only songs you first discovered that
+  year (no plays before it). Release years prefer the version already in your playlists, so a
+  remaster or compilation doesn't make an old song look new. Results work
+  like Forgotten Favourites: previews, "already in" flags, and adding the
+  ones you want to an existing or new playlist. Requires Last.fm to be
+  configured (see Setup).
 - **Ranking Check** - find songs that may be in the wrong ranking playlist.
   Pick your ranking playlists, best first (e.g. one to four), and your
   yearly playlist ranked best to worst (it defaults to the playlist named
@@ -200,7 +209,7 @@ functions. Currently available:
     blank for now - the first time you log in, the app shows your Spotify
     user ID and tells you to set it, then restart and log in again.
 
-    Optionally, to enable Most Played, Forgotten Favourites, Ranking Check
+    Optionally, to enable Most Played, Forgotten Favourites, Old Songs on Repeat, Ranking Check
     and Album Swap's album suggestions, also fill in `LASTFM_API_KEY` and `LASTFM_USERNAME` -
     get a free API key
     at https://www.last.fm/api/account/create. Everything else works
@@ -230,7 +239,7 @@ functions. Currently available:
 
 ## Listening history
 
-Forgotten Favourites, Ranking Check, Listening Visuals and Most Played's
+Forgotten Favourites, Old Songs on Repeat, Ranking Check, Listening Visuals and Most Played's
 First/Last Played filters use a local copy of every Last.fm scrobble, kept in a SQLite database at
 `.lastfm_cache/scrobbles.sqlite3`. The first tool that needs it downloads
 your full history (about 20 minutes, with a progress screen and **Cancel** -

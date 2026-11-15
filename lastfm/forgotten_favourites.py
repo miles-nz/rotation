@@ -97,11 +97,14 @@ def _signature(artists: str, name: str) -> tuple[str, str]:
 
 
 def _library_locations(sp: Spotify, cancel_check: CancelCheck | None):
-    """Returns (by_uri, by_signature), each mapping to the set of playlist
-    names (plus LIKED_SONGS_LABEL) a track is in. Covers playlists the user
-    owns or collaborates on - followed playlists belong to someone else, so
-    a track being in one of those doesn't mean it's in the user's library.
-    Liked Songs is only cached as bare uris, so it matches on uri alone."""
+    """Returns (by_uri, by_signature, earliest_year_by_signature). The first
+    two map to the set of playlist names (plus LIKED_SONGS_LABEL) a track is
+    in; the third maps a signature to the earliest release year among the
+    playlist copies of it (Liked Songs isn't cached with release years, so
+    it never contributes). Covers playlists the user owns or collaborates
+    on - followed playlists belong to someone else, so a track being in one
+    of those doesn't mean it's in the user's library. Liked Songs is only
+    cached as bare uris, so it matches on uri alone."""
     user_id = sp.current_user()["id"]
     playlist_ids = []
     results = sp.current_user_playlists(limit=50)
@@ -114,15 +117,20 @@ def _library_locations(sp: Spotify, cancel_check: CancelCheck | None):
     logger.info("checking %d playlist(s) and Liked Songs for tracks already in your library", len(playlist_ids))
     by_uri: dict[str, set[str]] = {}
     by_signature: dict[tuple[str, str], set[str]] = {}
+    earliest_year: dict[tuple[str, str], int] = {}
     for playlist in playlist_cache_module.get_playlists(sp, playlist_ids, cancel_check).values():
         for track in playlist["tracks"]:
+            signature = _signature(track["artists"], track["name"])
             by_uri.setdefault(track["uri"], set()).add(playlist["name"])
-            by_signature.setdefault(_signature(track["artists"], track["name"]), set()).add(playlist["name"])
+            by_signature.setdefault(signature, set()).add(playlist["name"])
+            year = track.get("release_year")
+            if year is not None:
+                earliest_year[signature] = min(earliest_year.get(signature, year), year)
 
     for uri in playlist_cache_module.get_liked_songs(sp, cancel_check):
         by_uri.setdefault(uri, set()).add(LIKED_SONGS_LABEL)
 
-    return by_uri, by_signature
+    return by_uri, by_signature, earliest_year
 
 
 def find_forgotten_favourites(
@@ -188,7 +196,7 @@ def find_forgotten_favourites(
             )
 
     if results:
-        by_uri, by_signature = _library_locations(sp, cancel_check)
+        by_uri, by_signature, _ = _library_locations(sp, cancel_check)
         for entry in results:
             locations = by_uri.get(entry["uri"], set()) | by_signature.get(
                 _signature(entry["artists"], entry["name"]), set()

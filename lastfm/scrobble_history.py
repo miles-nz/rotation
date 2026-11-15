@@ -243,6 +243,28 @@ def scrobbles_between(from_ts: int, to_ts: int) -> list[dict]:
     ]
 
 
+def plays_between(from_ts: int, to_ts: int) -> list[dict]:
+    """Plays of every track stored in [from_ts, to_ts), most played first,
+    as [{"artist", "name", "plays"}, ...]. Spellings that differ only by
+    case are counted as one track (the store's norm_key), reported under
+    the alphabetically first spelling. Reads what's already stored - call
+    sync() first for an up-to-date range."""
+    if not _PATH.exists():
+        return []
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            "SELECT MIN(ar.name), MIN(t.name), COUNT(*) AS plays "
+            "FROM scrobbles s "
+            "JOIN tracks t ON t.id = s.track_id "
+            "JOIN artists ar ON ar.id = t.artist_id "
+            "WHERE s.timestamp >= ? AND s.timestamp < ? "
+            "GROUP BY t.norm_key "
+            "ORDER BY plays DESC, t.norm_key",
+            (from_ts, to_ts),
+        ).fetchall()
+    return [{"artist": artist, "name": name, "plays": plays} for artist, name, plays in rows]
+
+
 def album_plays() -> list[dict]:
     """All-time plays of every (artist, album) pair stored, as
     [{"artist", "album", "image_url", "plays"}, ...] - names exactly as

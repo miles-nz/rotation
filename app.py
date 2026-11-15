@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import secrets
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
@@ -40,6 +40,7 @@ import lastfm.album_switches as album_switches_module
 import lastfm.forgotten_favourites as forgotten_favourites_module
 import lastfm.lastfm_client as lastfm_client_module
 import lastfm.most_played as most_played_module
+import lastfm.old_songs as old_songs_module
 import visuals.artist_river as artist_river_module
 import visuals.listening_shape as listening_shape_module
 
@@ -215,6 +216,16 @@ _swap_job = BackgroundJob(
 )
 _forgotten_job = BackgroundJob(
     [
+        "lastfm.forgotten_favourites",
+        "lastfm.most_played",
+        "lastfm.scrobble_history",
+        "playlists.playlist_cache",
+        "app",
+    ]
+)
+_old_songs_job = BackgroundJob(
+    [
+        "lastfm.old_songs",
         "lastfm.forgotten_favourites",
         "lastfm.most_played",
         "lastfm.scrobble_history",
@@ -425,6 +436,23 @@ def _run_forgotten_favourites_scan(min_plays: int, months: int):
             sp, min_plays, months, cancel_check=cancel_check
         )
         return {"min_plays": min_plays, "months": months, **result}
+
+    return target
+
+
+def _run_old_songs_scan(year: int, count: int, min_plays: int | None, discovered_only: bool):
+    def target(cancel_check):
+        sp = get_authenticated_client()
+        result = old_songs_module.find_old_songs(
+            sp, year, count, min_plays, discovered_only, cancel_check=cancel_check
+        )
+        return {
+            "year": year,
+            "count": count,
+            "min_plays": min_plays,
+            "discovered_only": discovered_only,
+            **result,
+        }
 
     return target
 
@@ -2399,6 +2427,147 @@ def forgotten_favourites_apply():
 
     return render_template(
         "forgotten_favourites_done.html",
+        added=added,
+        skipped=skipped,
+        local_skipped=local_skipped,
+        playlist_name=playlist_name,
+    )
+
+
+# --- Old Songs on Repeat ---------------------------------------------------
+# The songs played most in a year (the current one by default) that were
+# released before it, so the older songs that keep coming back can be added
+# to a playlist. Plays come from the local scrobble history. Manual only,
+# not a Cascade step.
+
+
+@app.route("/old-songs")
+def old_songs_picker():
+    if not _credentials_configured():
+        return render_template("old_songs.html", needs_credentials=True)
+
+    sp = get_authenticated_client()
+    return render_template(
+        "old_songs.html",
+        needs_credentials=False,
+        needs_lastfm=not _lastfm_configured(),
+        logged_in=sp is not None,
+        current_year=datetime.now(timezone.utc).year,
+        max_results=old_songs_module.MAX_RESULTS,
+    )
+
+
+@app.route("/old-songs/scan")
+def old_songs_scan():
+    if not _credentials_configured() or not _lastfm_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    year = request.args.get("year", type=int)
+    count = request.args.get("count", type=int)
+    min_plays = request.args.get("min_plays", type=int)
+    discovered_only = request.args.get("discovered_only") == "1"
+    current_year = datetime.now(timezone.utc).year
+    if (
+        not year
+        or not count
+        or not 1970 <= year <= current_year
+        or not 1 <= count <= old_songs_module.MAX_RESULTS
+        or (min_plays is not None and min_plays < 1)
+    ):
+        return redirect(url_for("old_songs_picker"))
+
+    _old_songs_job.start(_run_old_songs_scan(year, count, min_plays, discovered_only))
+
+    return render_template(
+        "progress.html",
+        status_url=url_for("old_songs_scan_status"),
+        cancel_url=url_for("old_songs_scan_cancel"),
+        result_url=url_for("old_songs_scan_result"),
+        back_url=url_for("old_songs_picker"),
+        heading="Looking for old songs on repeat…",
+        description="Updating your Last.fm listening history, ranking the songs you played that year, then resolving them on Spotify and checking their release years until enough older songs turn up. The first run builds your full listening history index, which can take several minutes - after that it's cached and only tops up what's new.",
+    )
+
+
+@app.route("/old-songs/scan/status")
+def old_songs_scan_status():
+    return jsonify(_old_songs_job.status())
+
+
+@app.route("/old-songs/scan/cancel", methods=["POST"])
+def old_songs_scan_cancel():
+    _old_songs_job.cancel()
+    return jsonify({"ok": True})
+
+
+@app.route("/old-songs/scan/result")
+def old_songs_scan_result():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    result = _old_songs_job.result
+    if result is None:
+        return redirect(url_for("old_songs_picker"))
+
+    return render_template(
+        "old_songs_result.html",
+        results=result["results"],
+        unmatched=result["unmatched"],
+        truncated=result["truncated"],
+        scanned_count=result["scanned_count"],
+        year=result["year"],
+        count=result["count"],
+        min_plays=result["min_plays"],
+        discovered_only=result["discovered_only"],
+    )
+
+
+@app.route("/old-songs/apply", methods=["POST"])
+def old_songs_apply():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    result = _old_songs_job.result
+    if result is None:
+        return redirect(url_for("old_songs_picker"))
+
+    result_uris = {t["uri"] for t in result["results"]}
+    selected_uris = [uri for uri in request.form.getlist("track") if uri in result_uris]
+    if not selected_uris:
+        return redirect(url_for("old_songs_scan_result"))
+
+    destination_mode = request.form.get("destination_mode")
+    if destination_mode == "new":
+        destination_name = request.form.get("destination_name", "").strip()
+        if not destination_name:
+            return redirect(url_for("old_songs_scan_result"))
+        playlist_id = playlist_filter_module.create_playlist(sp, destination_name)
+        playlist_name = destination_name
+    else:
+        playlist_id = request.form.get("destination_playlist_id")
+        playlist_name = request.form.get("destination_playlist_name")
+        if not playlist_id:
+            return redirect(url_for("old_songs_scan_result"))
+
+    added, skipped, local_skipped = playlist_filter_module.add_tracks_to_playlist(
+        sp, playlist_id, selected_uris
+    )
+    _old_songs_job.result = None
+
+    return render_template(
+        "old_songs_done.html",
         added=added,
         skipped=skipped,
         local_skipped=local_skipped,

@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Old Songs on Repeat - Rotation{% endblock %}
+{% block extra_style %}
+.number-input { width: 6rem; }
+{% endblock %}
+{% block content %}
+<h1>Old Songs on Repeat</h1>
+<p>
+    Find the songs you've played most in a year that were released before
+    it - the older songs you keep coming back to - so you can add them to a
+    playlist. Songs already in one of your playlists or Liked Songs are still
+    shown, flagged with where they are.
+</p>
+
+{% if needs_credentials %}
+<p class="warning">
+    No Spotify credentials found. Copy <code>.env.example</code> to
+    <code>.env</code> and fill in <code>SPOTIFY_CLIENT_ID</code> and
+    <code>SPOTIFY_CLIENT_SECRET</code>, then restart the app. See the README for
+    how to register a Spotify app.
+</p>
+{% elif needs_lastfm %}
+<p class="warning">
+    No Last.fm credentials found. Copy <code>.env.example</code> to
+    <code>.env</code> and fill in <code>LASTFM_API_KEY</code> and
+    <code>LASTFM_USERNAME</code>, then restart the app. See the README for
+    how to get a free Last.fm API key.
+</p>
+{% elif not logged_in %}
+<p><a class="button" href="{{ url_for('login') }}">Log in with Spotify</a></p>
+{% else %}
+<form method="get" action="{{ url_for('old_songs_scan') }}" id="picker-form">
+    <fieldset>
+        <legend>Year</legend>
+        <input class="number-input" type="number" name="year" id="year" min="1970" max="{{ current_year }}" value="{{ current_year }}" required />
+        <span class="hint">Songs released before this year, played during it.</span>
+    </fieldset>
+
+    <fieldset>
+        <legend>Show my top</legend>
+        <input class="number-input" type="number" name="count" id="count" min="1" max="{{ max_results }}" value="50" required />
+        songs
+    </fieldset>
+
+    <fieldset>
+        <legend>Played at least (optional)</legend>
+        <input class="number-input" type="number" name="min_plays" id="min-plays" min="1" placeholder="any" />
+        times that year
+    </fieldset>
+
+    <fieldset>
+        <legend>Discovery</legend>
+        <label>
+            <input type="checkbox" name="discovered_only" value="1" />
+            Only songs I first discovered that year
+        </label>
+        <span class="hint">Leaves out anything you'd already played before the year started.</span>
+    </fieldset>
+
+    <p class="hint">
+        The first run builds your full listening history index - this can
+        take several minutes, but only happens once (it stays cached and
+        updates quickly after that).
+    </p>
+
+    <p>
+        <button class="button" type="submit">Find old songs</button>
+    </p>
+</form>
+{% endif %} {% endblock %}
