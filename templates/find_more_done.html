@@ -1,0 +1,30 @@
+{% extends "base.html" %} {% block title %}Done - Rotation{% endblock %} {% block content %}
+<h1>Done</h1>
+{% if playlist_name %}
+<p>
+    Added {{ added }} track{{ 's' if added != 1 else '' }}{% if added_albums %} from
+    {{ added_albums }} release{{ 's' if added_albums != 1 else '' }}{% endif %} to
+    "{{ playlist_name }}"{% if skipped %} ({{ skipped }} already there, skipped){% endif %}.
+</p>
+{% endif %}
+{% if local_skipped %}
+<p class="hint">
+    {{ local_skipped }} local file{{ 's' if local_skipped != 1 else '' }} couldn't be
+    added - Spotify's API doesn't support adding local files to a playlist.
+</p>
+{% endif %}
+{% if snoozed %}
+<p>
+    Snoozed {{ snoozed }} suggestion{{ 's' if snoozed != 1 else '' }} for {{ snooze_days }} days.
+</p>
+{% endif %}
+{% if blocked %}
+<p>
+    {{ blocked }} artist{{ 's' if blocked != 1 else '' }} won't be suggested again.
+</p>
+{% endif %}
+{% if snoozed or blocked %}
+<p class="hint">You can undo these on the Find More Like This page.</p>
+{% endif %}
+<p><a class="button" href="{{ url_for('find_more_picker') }}">Back</a></p>
+{% endblock %}

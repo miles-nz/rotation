@@ -258,3 +258,40 @@ def get_album_tags(artist: str, album: str, limit: int = 5) -> list[str]:
 def get_artist_tags(artist: str, limit: int = 5) -> list[str]:
     """Same as get_track_tags, for an artist."""
     return _top_tag_names(_get("artist.gettoptags", artist=artist), limit)
+
+
+def get_similar_artists(artist: str, limit: int = 50) -> list[dict]:
+    """Artists Last.fm considers similar, most similar first. Returns
+    [{"name", "mbid", "match"}, ...] - match is Last.fm's 0-1 similarity
+    and mbid is None when Last.fm has no MusicBrainz ID for that artist.
+    Based on what people listen to together, not on anything promoted.
+    Public data, no username needed."""
+    payload = _get("artist.getsimilar", artist=artist, limit=limit, autocorrect=1)
+    return [
+        {"name": a["name"], "mbid": a.get("mbid") or None, "match": float(a.get("match") or 0)}
+        for a in _as_list(payload.get("similarartists", {}).get("artist"))
+    ]
+
+
+def get_artist_info(artist: str) -> dict:
+    """Last.fm's public profile for an artist: {"name", "mbid", "listeners",
+    "tags"} - listeners is the all-time unique listener count, tags the
+    top few user-submitted tags, most-applied first. "name" is Last.fm's
+    own (autocorrected) spelling."""
+    info = _get("artist.getinfo", artist=artist, autocorrect=1)["artist"]
+    return {
+        "name": info.get("name") or artist,
+        "mbid": info.get("mbid") or None,
+        "listeners": int((info.get("stats") or {}).get("listeners") or 0),
+        "tags": [t["name"] for t in _as_list((info.get("tags") or {}).get("tag"))],
+    }
+
+
+def get_artist_top_tracks(artist: str, limit: int = 50) -> list[dict]:
+    """An artist's most-played tracks across all of Last.fm (not just this
+    user). Returns [{"name", "playcount"}, ...], most-played first."""
+    payload = _get("artist.gettoptracks", artist=artist, limit=limit, autocorrect=1)
+    return [
+        {"name": t["name"], "playcount": int(t.get("playcount") or 0)}
+        for t in _as_list(payload.get("toptracks", {}).get("track"))
+    ]

@@ -17,6 +17,20 @@ _ENTITY_FILES = {
     "album": "albums.json",
     "artist": "artists.json",
     "artist_genres": "artist_genres.json",
+    # Find More Like This. Unlike the entries above, these are wrapped as
+    # {"fetched": <unix time>, "value": ...} and refreshed after a while,
+    # since similarity, listener counts and releases do change.
+    "lastfm_similar": "lastfm_similar.json",
+    "listenbrainz_similar": "listenbrainz_similar.json",
+    "artist_info": "artist_info.json",
+    "artist_top_tracks": "artist_top_tracks.json",
+    "artist_releases": "artist_releases.json",
+    # Album id -> its tracks. An album's contents don't change, so these
+    # are kept indefinitely like the name lookups.
+    "album_tracks": "album_tracks.json",
+    # Last.fm artist name -> exact-name Spotify artist (see
+    # find_more_like_this._search_spotify_artist).
+    "find_more_spotify_artists": "find_more_spotify_artists.json",
 }
 
 

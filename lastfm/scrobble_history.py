@@ -308,6 +308,46 @@ def track_scrobble_times() -> list[dict]:
     return list(tracks.values())
 
 
+def history_complete() -> bool:
+    """True once the full history has been downloaded at least once, so a
+    sync() from here on is only a quick top-up."""
+    if not _PATH.exists():
+        return False
+    with closing(_connect()) as conn:
+        return bool(_get_state(conn, "backfill_complete"))
+
+
+def artist_plays() -> dict[str, int]:
+    """All-time scrobbles per artist, keyed by the artist's name exactly as
+    stored (callers group spellings however they need)."""
+    if not _PATH.exists():
+        return {}
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            "SELECT ar.name, COUNT(*) "
+            "FROM scrobbles s "
+            "JOIN tracks t ON t.id = s.track_id "
+            "JOIN artists ar ON ar.id = t.artist_id "
+            "GROUP BY ar.id"
+        ).fetchall()
+    return dict(rows)
+
+
+def track_plays() -> list[tuple[str, str, int]]:
+    """All-time scrobbles per track as [(artist, track, plays), ...] - names
+    exactly as stored, so callers group spellings however they need."""
+    if not _PATH.exists():
+        return []
+    with closing(_connect()) as conn:
+        return conn.execute(
+            "SELECT ar.name, t.name, COUNT(*) "
+            "FROM scrobbles s "
+            "JOIN tracks t ON t.id = s.track_id "
+            "JOIN artists ar ON ar.id = t.artist_id "
+            "GROUP BY t.id"
+        ).fetchall()
+
+
 def lookup(data: dict, artist: str, name: str) -> dict:
     """Looks up a track's {"first", "last"} unix timestamps in an
     already-loaded index (see load()). Empty dict if never scrobbled or

@@ -96,6 +96,22 @@ def _signature(artists: str, name: str) -> tuple[str, str]:
     return playlist_filter._primary_artist(artists), playlist_filter._normalize_title(name)
 
 
+def owned_playlists(sp: Spotify) -> dict[str, dict]:
+    """The playlists that make up "your library" - ones you own or
+    collaborate on, not ones you just follow - as {id: listing_info}. Pass
+    it to get_playlists as known, so their cached copies can be checked
+    without a request per playlist."""
+    user_id = sp.current_user()["id"]
+    playlists: dict[str, dict] = {}
+    results = sp.current_user_playlists(limit=50)
+    while results:
+        for playlist in results["items"]:
+            if (playlist.get("owner") or {}).get("id") == user_id or playlist.get("collaborative"):
+                playlists[playlist["id"]] = playlist_cache_module.listing_info(playlist)
+        results = sp.next(results) if results.get("next") else None
+    return playlists
+
+
 def _library_locations(sp: Spotify, cancel_check: CancelCheck | None):
     """Returns (by_uri, by_signature, earliest_year_by_signature). The first
     two map to the set of playlist names (plus LIKED_SONGS_LABEL) a track is
@@ -105,20 +121,13 @@ def _library_locations(sp: Spotify, cancel_check: CancelCheck | None):
     on - followed playlists belong to someone else, so a track being in one
     of those doesn't mean it's in the user's library. Liked Songs is only
     cached as bare uris, so it matches on uri alone."""
-    user_id = sp.current_user()["id"]
-    playlist_ids = []
-    results = sp.current_user_playlists(limit=50)
-    while results:
-        for playlist in results["items"]:
-            if (playlist.get("owner") or {}).get("id") == user_id or playlist.get("collaborative"):
-                playlist_ids.append(playlist["id"])
-        results = sp.next(results) if results.get("next") else None
+    owned = owned_playlists(sp)
 
-    logger.info("checking %d playlist(s) and Liked Songs for tracks already in your library", len(playlist_ids))
+    logger.info("checking %d playlist(s) and Liked Songs for tracks already in your library", len(owned))
     by_uri: dict[str, set[str]] = {}
     by_signature: dict[tuple[str, str], set[str]] = {}
     earliest_year: dict[tuple[str, str], int] = {}
-    for playlist in playlist_cache_module.get_playlists(sp, playlist_ids, cancel_check).values():
+    for playlist in playlist_cache_module.get_playlists(sp, list(owned), cancel_check, known=owned).values():
         for track in playlist["tracks"]:
             signature = _signature(track["artists"], track["name"])
             by_uri.setdefault(track["uri"], set()).add(playlist["name"])

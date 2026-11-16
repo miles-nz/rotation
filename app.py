@@ -37,6 +37,8 @@ import playlists.ranking_dismissals as ranking_dismissals_module
 import playlists.removal_history as removal_history_module
 import playlists.snapshots as snapshots_module
 import lastfm.album_switches as album_switches_module
+import lastfm.find_more_hidden as find_more_hidden_module
+import lastfm.find_more_like_this as find_more_module
 import lastfm.forgotten_favourites as forgotten_favourites_module
 import lastfm.lastfm_client as lastfm_client_module
 import lastfm.most_played as most_played_module
@@ -219,6 +221,15 @@ _forgotten_job = BackgroundJob(
         "lastfm.forgotten_favourites",
         "lastfm.most_played",
         "lastfm.scrobble_history",
+        "playlists.playlist_cache",
+        "app",
+    ]
+)
+_find_more_job = BackgroundJob(
+    [
+        "lastfm.find_more_like_this",
+        "lastfm.scrobble_history",
+        "listenbrainz.listenbrainz_client",
         "playlists.playlist_cache",
         "app",
     ]
@@ -436,6 +447,38 @@ def _run_forgotten_favourites_scan(min_plays: int, months: int):
             sp, min_plays, months, cancel_check=cancel_check
         )
         return {"min_plays": min_plays, "months": months, **result}
+
+    return target
+
+
+def _find_more_heard_playlists(sp) -> list[dict] | None:
+    """The playlists whose songs count as heard for Find More Like This
+    (Liked Songs always does): your ranking playlists, as saved for Ranking
+    Check. None if that's never been saved, which means every playlist."""
+    tiers = _default_preferences("ranking_check", sp)
+    if not tiers:
+        return None
+    return [t for t in tiers if t.get("id")]
+
+
+def _run_find_more_scan(
+    playlist_ids: list[str], mode: str, years: int | None, max_listeners: int | None, include_known: bool
+):
+    def target(cancel_check):
+        sp = get_authenticated_client()
+        heard = _find_more_heard_playlists(sp)
+        result = find_more_module.find_more_like_this(
+            sp,
+            playlist_ids,
+            mode,
+            years,
+            max_listeners,
+            include_known,
+            heard_playlist_ids=[t["id"] for t in heard] if heard is not None else None,
+            cancel_check=cancel_check,
+        )
+        result["heard_playlists"] = [t.get("name") or t["id"] for t in heard] if heard is not None else None
+        return result
 
     return target
 
@@ -2431,6 +2474,214 @@ def forgotten_favourites_apply():
         skipped=skipped,
         local_skipped=local_skipped,
         playlist_name=playlist_name,
+    )
+
+
+# --- Find More Like This ---------------------------------------------------
+# Recent music by artists similar to the ones in a playlist, from Last.fm
+# and ListenBrainz similarity rather than Spotify's own recommendations.
+# Artists already in your library are left out. Manual only, not a Cascade
+# step.
+
+
+def _optional_positive_int(name: str) -> tuple[bool, int | None]:
+    """(ok, value) for an optional whole-number query arg: blank is
+    (True, None), a positive number is (True, n), anything else is
+    (False, None)."""
+    raw = (request.args.get(name) or "").strip()
+    if not raw:
+        return True, None
+    try:
+        value = int(raw)
+    except ValueError:
+        return False, None
+    return (value >= 1), (value if value >= 1 else None)
+
+
+@app.route("/find-more")
+def find_more_picker():
+    if not _credentials_configured():
+        return render_template("find_more.html", needs_credentials=True)
+
+    sp = get_authenticated_client()
+    return render_template(
+        "find_more.html",
+        needs_credentials=False,
+        needs_lastfm=not _lastfm_configured(),
+        logged_in=sp is not None,
+        default_years=find_more_module.DEFAULT_YEARS,
+        scrobbles_to_exclude=find_more_module.SCROBBLES_TO_EXCLUDE,
+        heard_playlists=_find_more_heard_playlists(sp) if sp is not None else None,
+        snoozes=find_more_hidden_module.list_snoozes() if sp is not None else [],
+        blocked=find_more_hidden_module.list_blocked() if sp is not None else [],
+    )
+
+
+@app.route("/find-more/unsnooze", methods=["POST"])
+def find_more_unsnooze():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+    if get_authenticated_client() is None:
+        return redirect(url_for("login"))
+    # uri as a form field rather than in the path - Spotify uris contain colons.
+    uri = request.form.get("uri")
+    if uri:
+        find_more_hidden_module.unsnooze(uri)
+    return redirect(url_for("find_more_picker"))
+
+
+@app.route("/find-more/unblock", methods=["POST"])
+def find_more_unblock():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+    if get_authenticated_client() is None:
+        return redirect(url_for("login"))
+    key = request.form.get("key")
+    if key:
+        find_more_hidden_module.unblock(key)
+    return redirect(url_for("find_more_picker"))
+
+
+@app.route("/find-more/scan")
+def find_more_scan():
+    if not _credentials_configured() or not _lastfm_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    playlist_ids = [pid for pid in dict.fromkeys(request.args.getlist("playlist_id")) if pid]
+    mode = request.args.get("mode")
+    years_ok, years = _optional_positive_int("years")
+    listeners_ok, max_listeners = _optional_positive_int("max_listeners")
+    if not playlist_ids or mode not in find_more_module.MODES or not years_ok or not listeners_ok:
+        return redirect(url_for("find_more_picker"))
+
+    include_known = request.args.get("include_known") == "1"
+    _find_more_job.start(_run_find_more_scan(playlist_ids, mode, years, max_listeners, include_known))
+
+    return render_template(
+        "progress.html",
+        status_url=url_for("find_more_scan_status"),
+        cancel_url=url_for("find_more_scan_cancel"),
+        result_url=url_for("find_more_scan_result"),
+        back_url=url_for("find_more_picker"),
+        heading="Finding more like this…",
+        description="Reading the playlist's artists, looking up similar artists on Last.fm and ListenBrainz, leaving out ones already in your library or listening history, then checking the best matches on Spotify for recent releases. The first run on a playlist takes a minute or two - lookups are cached after that.",
+    )
+
+
+@app.route("/find-more/scan/status")
+def find_more_scan_status():
+    return jsonify(_find_more_job.status())
+
+
+@app.route("/find-more/scan/cancel", methods=["POST"])
+def find_more_scan_cancel():
+    _find_more_job.cancel()
+    return jsonify({"ok": True})
+
+
+@app.route("/find-more/scan/result")
+def find_more_scan_result():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    result = _find_more_job.result
+    if result is None:
+        return redirect(url_for("find_more_picker"))
+
+    return render_template(
+        "find_more_result.html",
+        result=result,
+        snooze_days=find_more_hidden_module.SNOOZE_DAYS,
+        target_artists=find_more_module.TARGET_ARTISTS,
+    )
+
+
+@app.route("/find-more/apply", methods=["POST"])
+def find_more_apply():
+    if not _credentials_configured():
+        return redirect(url_for("home"))
+
+    sp = get_authenticated_client()
+    if sp is None:
+        return redirect(url_for("login"))
+
+    result = _find_more_job.result
+    if result is None:
+        return redirect(url_for("find_more_picker"))
+
+    # Everything the form names is checked against this run's results, so
+    # nothing outside them can be added, snoozed or blocked.
+    artists_by_key = {a["key"]: a for a in result["artists"]}
+    items_by_uri = {}
+    for artist in result["artists"]:
+        for item in artist.get("tracks") or artist.get("albums") or []:
+            items_by_uri[item["uri"]] = {**item, "artist_key": artist["key"]}
+
+    blocked_keys = [k for k in dict.fromkeys(request.form.getlist("block")) if k in artists_by_key]
+    snooze_uris = [u for u in dict.fromkeys(request.form.getlist("snooze")) if u in items_by_uri]
+    add_uris = [
+        u
+        for u in dict.fromkeys(request.form.getlist("add"))
+        if u in items_by_uri and u not in snooze_uris and items_by_uri[u]["artist_key"] not in blocked_keys
+    ]
+    if not (add_uris or snooze_uris or blocked_keys):
+        return redirect(url_for("find_more_scan_result"))
+
+    added = skipped = local_skipped = 0
+    playlist_name = None
+    if add_uris:
+        destination_mode = request.form.get("destination_mode")
+        if destination_mode == "new":
+            destination_name = request.form.get("destination_name", "").strip()
+            if not destination_name:
+                return redirect(url_for("find_more_scan_result"))
+            playlist_id = playlist_filter_module.create_playlist(sp, destination_name)
+            playlist_name = destination_name
+        else:
+            playlist_id = request.form.get("destination_playlist_id")
+            playlist_name = request.form.get("destination_playlist_name")
+            if not playlist_id:
+                return redirect(url_for("find_more_scan_result"))
+
+        if result["mode"] == "albums":
+            track_uris = find_more_module.album_track_uris(
+                sp, [items_by_uri[u]["id"] for u in add_uris]
+            )
+        else:
+            track_uris = add_uris
+        added, skipped, local_skipped = playlist_filter_module.add_tracks_to_playlist(
+            sp, playlist_id, track_uris
+        )
+
+    snoozed = find_more_hidden_module.snooze(
+        [
+            {"uri": u, "name": items_by_uri[u]["name"], "artists": items_by_uri[u]["artists"]}
+            for u in snooze_uris
+        ]
+    )
+    blocked = find_more_hidden_module.block(
+        [{"key": k, "name": artists_by_key[k]["name"]} for k in blocked_keys]
+    )
+    _find_more_job.result = None
+
+    return render_template(
+        "find_more_done.html",
+        added=added,
+        skipped=skipped,
+        local_skipped=local_skipped,
+        playlist_name=playlist_name,
+        added_albums=len(add_uris) if result["mode"] == "albums" else 0,
+        snoozed=snoozed,
+        blocked=blocked,
+        snooze_days=find_more_hidden_module.SNOOZE_DAYS,
     )
 
 

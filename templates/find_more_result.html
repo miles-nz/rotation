@@ -1,0 +1,452 @@
+{% extends "base.html" %}
+{% block title %}Find More Like This - Rotation{% endblock %}
+{% block extra_style %}
+body { max-width: 80rem; }
+.results-table-wrap { overflow-x: auto; margin: 1rem 0; }
+table.results-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.results-table th, .results-table td { padding: 0.5rem 0.6rem; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+.results-table th { color: var(--muted); font-weight: 600; white-space: nowrap; }
+.results-table td.nowrap { white-space: nowrap; }
+.results-table tbody tr:hover { background: var(--hover-bg); }
+.results-table tr.preview-row:hover { background: none; }
+.results-table tr.artist-start td { border-top: 2px solid var(--border-light); }
+tr.blocked td:not(:last-child), .artist-card.blocked .card-body { opacity: 0.45; }
+.checkbox-col { width: 1.6rem; }
+.preview-btn { background: none; border: 1px solid var(--border); border-radius: 50%; width: 1.6rem; height: 1.6rem; padding: 0; cursor: pointer; color: var(--text); font-size: 0.7rem; line-height: 1; }
+.preview-btn:hover { border-color: var(--accent); color: var(--accent); }
+.preview-embed { border: none; border-radius: 12px; width: 100%; height: 80px; background: var(--bg); display: block; }
+.preview-embed.album { height: 152px; }
+.explicit-badge { display: inline-block; font-size: 0.65rem; line-height: 1; border: 1px solid var(--muted); border-radius: 3px; padding: 0.15rem 0.25rem; margin-left: 0.4rem; color: var(--muted); vertical-align: middle; }
+.why { color: var(--muted); font-size: 0.8rem; }
+.source-badge { display: inline-block; font-size: 0.7rem; border: 1px solid var(--border); border-radius: 999px; padding: 0.05rem 0.45rem; margin-right: 0.25rem; color: var(--muted); white-space: nowrap; }
+.known-badge { display: inline-block; font-size: 0.7rem; border: 1px solid var(--accent); color: var(--accent); border-radius: 999px; padding: 0.05rem 0.45rem; margin: 0.15rem 0; }
+.tag { display: inline-block; font-size: 0.75rem; background: var(--secondary-bg); border-radius: 4px; padding: 0.05rem 0.35rem; margin: 0 0.2rem 0.2rem 0; white-space: nowrap; }
+.side-check { white-space: nowrap; font-size: 0.8rem; color: var(--muted); }
+.thumb { width: 40px; height: 40px; border-radius: 4px; object-fit: cover; display: block; }
+.artist-cards { display: grid; gap: 1rem; margin: 1rem 0; }
+.artist-card { border: 1px solid var(--border); border-radius: 10px; padding: 0.9rem 1rem; }
+.card-head { display: flex; gap: 0.9rem; align-items: flex-start; }
+.card-head img, .card-head .no-image { width: 64px; height: 64px; border-radius: 8px; object-fit: cover; flex: none; background: var(--secondary-bg); }
+.card-head h2 { margin: 0 0 0.2rem; font-size: 1.05rem; }
+.card-head .card-meta { flex: 1; min-width: 0; }
+.card-tracks { list-style: none; padding: 0; margin: 0.75rem 0 0; }
+.card-tracks li { padding: 0.35rem 0; border-top: 1px solid var(--border); }
+.card-track-row { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+.card-track-row .track-label { flex: 1; min-width: 12rem; }
+.card-tracks .preview-embed { margin-top: 0.4rem; }
+.dest-option { display: block; margin: 0.5rem 0; }
+.dest-detail { margin: 0.5rem 0 0.5rem 1.5rem; }
+.run-notes li { margin: 0.2rem 0; }
+{% endblock %}
+{% block content %}
+{% macro why(artist) -%}
+    {% if artist.playlist_tracks %}
+    <span class="why">In this playlist ({{ artist.playlist_tracks }} track{{ 's' if artist.playlist_tracks != 1 else '' }}){% if artist.seeds %}, also similar to {{ artist.seeds[:2] | join(', ') }}{% endif %}</span>
+    {% else %}
+    <span class="why" title="Similar to {{ artist.seeds | join(', ') }}">
+        Similar to {{ artist.seeds[:3] | join(', ') }}{% if artist.seeds | length > 3 %} and {{ artist.seeds | length - 3 }} more{% endif %}
+    </span>
+    {% endif %}
+    {% if artist.known %}<br /><span class="known-badge">
+        {%- if artist.known == "library" %}In your library · {% elif artist.known == "scrobbled" %}You've played them {{ "{:,}".format(artist.your_scrobbles) }} times · {% endif -%}
+        songs you haven't heard</span>{% endif %}
+{%- endmacro %}
+{% macro sources(artist) -%}
+    {% for s in artist.sources %}<span class="source-badge">{{ s }}</span>{% endfor %}
+{%- endmacro %}
+{% macro tags(artist) -%}
+    {% for t in artist.shared_tags %}<span class="tag">{{ t }}</span>{% endfor %}
+{%- endmacro %}
+{% macro listeners(artist) -%}
+    {% if artist.listeners is not none %}{{ "{:,}".format(artist.listeners) }} listeners{% endif %}
+{%- endmacro %}
+
+<h1>Find More Like This</h1>
+
+<p class="hint">
+    Like {{ result.sources | map(attribute='name') | join(', ') }}, based on
+    {% if result.seed_count < result.artist_count %}the {{ result.seed_count }} artists with the most tracks (of {{ result.artist_count }}){% else %}its {{ result.seed_count }} artist{{ 's' if result.seed_count != 1 else '' }}{% endif %}.
+    {% if result.years %}Released in the last {{ result.years }} year{{ 's' if result.years != 1 else '' }}.{% else %}Releases of any age.{% endif %}
+    {% if result.max_listeners %}New artists with at most {{ "{:,}".format(result.max_listeners) }} Last.fm listeners.{% endif %}
+    {% if result.include_known %}Including songs you haven't heard by artists you know.{% endif %}
+</p>
+{% if result.profile_tags %}
+<p class="hint">The playlist's sound on Last.fm: {% for t in result.profile_tags %}<span class="tag">{{ t }}</span>{% endfor %}</p>
+{% endif %}
+
+{% if result.listenbrainz_failed %}
+<p class="warning">ListenBrainz wasn't responding, so these come from Last.fm only.</p>
+{% endif %}
+
+{% set artists = result.artists %}
+{% if not artists %}
+<p class="hint">
+    No suggestions. Of {{ result.candidate_count }} similar artists,
+    {{ result.skipped.in_library + result.skipped.scrobbled }} are already in your library or listening history
+    {%- if result.skipped.no_recent %}, {{ result.skipped.no_recent }} had nothing new in the time window{% endif %}
+    {%- if result.skipped.over_cap %}, {{ result.skipped.over_cap }} had more listeners than your limit{% endif %}.
+    Try more years, a higher listener limit, or more playlists.
+</p>
+<p><a class="button" href="{{ url_for('find_more_picker') }}">Back</a></p>
+{% else %}
+
+<p>
+    {{ artists | length }} artist{{ 's' if artists | length != 1 else '' }}, most similar first{% set known_shown = artists | selectattr('known') | list | length %}{% if result.include_known %} ({{ known_shown }} you already know){% endif %}.
+    {% if result.mode == "tracks" %}
+    Tracks start ticked - untick any you don't want.
+    {% elif result.mode == "albums" %}
+    Tick the albums to add - each adds all of its tracks.
+    {% else %}
+    Tick the tracks you want.
+    {% endif %}
+    Snooze a suggestion to hide it for {{ snooze_days }} days, or never suggest an artist again.
+    Press ▶ to preview.
+</p>
+
+<form method="post" action="{{ url_for('find_more_apply') }}" id="apply-form">
+
+{% if result.mode == "tracks" %}
+    <div class="results-table-wrap">
+        <table class="results-table">
+            <thead>
+                <tr>
+                    <th class="checkbox-col"><input type="checkbox" id="select-all" checked title="Select all" /></th>
+                    <th></th>
+                    <th>Track</th>
+                    <th>Artist</th>
+                    <th>Release</th>
+                    <th>Released</th>
+                    <th title="All-time plays on Last.fm, across everyone">Plays</th>
+                    <th>Why</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for artist in artists %}
+                {% for t in artist.tracks %}
+                <tr class="item-row{% if loop.first %} artist-start{% endif %}" data-artist="{{ artist.key }}" data-uri="{{ t.uri }}">
+                    <td><input type="checkbox" name="add" value="{{ t.uri }}" class="add-check" checked /></td>
+                    <td><button type="button" class="preview-btn" data-kind="track" data-uri="{{ t.uri }}" title="Preview">▶</button></td>
+                    <td>{{ t.name }}{% if t.explicit %}<span class="explicit-badge">E</span>{% endif %}</td>
+                    <td>
+                        {{ artist.name }}
+                        {% if loop.first %}<div class="why">{{ listeners(artist) }}</div>{% endif %}
+                    </td>
+                    <td>{{ t.album }}</td>
+                    <td class="nowrap">{{ t.release_date }}</td>
+                    <td class="nowrap">{{ "{:,}".format(t.playcount) if t.playcount else "" }}</td>
+                    <td>
+                        {% if loop.first %}
+                        {{ why(artist) }}<br />{{ sources(artist) }}{{ tags(artist) }}
+                        {% endif %}
+                    </td>
+                    <td>
+                        <label class="side-check"><input type="checkbox" name="snooze" value="{{ t.uri }}" class="snooze-check" /> Snooze</label><br />
+                        {% if loop.first %}
+                        <label class="side-check"><input type="checkbox" name="block" value="{{ artist.key }}" class="block-check" data-artist="{{ artist.key }}" /> Never suggest artist</label>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+{% elif result.mode == "albums" %}
+    <div class="results-table-wrap">
+        <table class="results-table">
+            <thead>
+                <tr>
+                    <th class="checkbox-col"><input type="checkbox" id="select-all" title="Select all" /></th>
+                    <th></th>
+                    <th></th>
+                    <th>Release</th>
+                    <th>Artist</th>
+                    <th>Type</th>
+                    <th>Released</th>
+                    <th>Tracks</th>
+                    <th>Why</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for artist in artists %}
+                {% for a in artist.albums %}
+                <tr class="item-row{% if loop.first %} artist-start{% endif %}" data-artist="{{ artist.key }}" data-uri="{{ a.uri }}">
+                    <td><input type="checkbox" name="add" value="{{ a.uri }}" class="add-check" /></td>
+                    <td><button type="button" class="preview-btn" data-kind="album" data-uri="{{ a.uri }}" title="Preview">▶</button></td>
+                    <td>{% if a.image_url %}<img class="thumb" src="{{ a.image_url }}" alt="" loading="lazy" />{% endif %}</td>
+                    <td>{{ a.name }}</td>
+                    <td>
+                        {{ artist.name }}
+                        {% if loop.first %}<div class="why">{{ listeners(artist) }}</div>{% endif %}
+                    </td>
+                    <td>{{ a.kind }}</td>
+                    <td class="nowrap">{{ a.release_date }}</td>
+                    <td>{{ a.total_tracks }}</td>
+                    <td>
+                        {% if loop.first %}
+                        {{ why(artist) }}<br />{{ sources(artist) }}{{ tags(artist) }}
+                        {% endif %}
+                    </td>
+                    <td>
+                        <label class="side-check"><input type="checkbox" name="snooze" value="{{ a.uri }}" class="snooze-check" /> Snooze</label><br />
+                        {% if loop.first %}
+                        <label class="side-check"><input type="checkbox" name="block" value="{{ artist.key }}" class="block-check" data-artist="{{ artist.key }}" /> Never suggest artist</label>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+{% else %}
+    <p><label class="side-check"><input type="checkbox" id="select-all" /> Select all tracks</label></p>
+    <div class="artist-cards">
+        {% for artist in artists %}
+        <section class="artist-card" data-artist="{{ artist.key }}">
+            <div class="card-head card-body">
+                {% if artist.image_url %}<img src="{{ artist.image_url }}" alt="" loading="lazy" />{% else %}<div class="no-image"></div>{% endif %}
+                <div class="card-meta">
+                    <h2>{{ artist.name }}</h2>
+                    <div class="why">{{ listeners(artist) }}</div>
+                    {{ why(artist) }}<br />
+                    {{ sources(artist) }}{{ tags(artist) }}
+                </div>
+            </div>
+            <ul class="card-tracks card-body">
+                {% for t in artist.tracks %}
+                <li class="item-row" data-artist="{{ artist.key }}" data-uri="{{ t.uri }}">
+                    <div class="card-track-row">
+                        <input type="checkbox" name="add" value="{{ t.uri }}" class="add-check" />
+                        <button type="button" class="preview-btn" data-kind="track" data-uri="{{ t.uri }}" title="Preview">▶</button>
+                        <span class="track-label">
+                            {{ t.name }}{% if t.explicit %}<span class="explicit-badge">E</span>{% endif %}
+                            <span class="why">· {{ t.album }} · {{ t.release_date }}{% if t.playcount %} · {{ "{:,}".format(t.playcount) }} plays{% endif %}</span>
+                        </span>
+                        <label class="side-check"><input type="checkbox" name="snooze" value="{{ t.uri }}" class="snooze-check" /> Snooze</label>
+                    </div>
+                </li>
+                {% endfor %}
+            </ul>
+            <p style="margin: 0.6rem 0 0">
+                <label class="side-check"><input type="checkbox" name="block" value="{{ artist.key }}" class="block-check" data-artist="{{ artist.key }}" /> Never suggest {{ artist.name }}</label>
+            </p>
+        </section>
+        {% endfor %}
+    </div>
+{% endif %}
+
+    <fieldset style="margin-top: 1.5rem" id="destination-fieldset">
+        <legend>Add ticked {{ 'albums' if result.mode == 'albums' else 'tracks' }} to</legend>
+        <label class="dest-option">
+            <input type="radio" name="destination_mode" value="existing" checked /> An existing playlist
+        </label>
+        <div class="dest-detail" id="dest-existing">
+            <div class="combo" id="dest-combo">
+                <input type="text" id="dest-combo-input" class="combo-input" placeholder="Search your playlists…" autocomplete="off" />
+                <div class="combo-panel" id="dest-combo-panel"></div>
+            </div>
+        </div>
+        <label class="dest-option">
+            <input type="radio" name="destination_mode" value="new" /> A new playlist
+        </label>
+        <div class="dest-detail" id="dest-new" style="display: none">
+            <input type="text" id="dest-new-name" name="destination_name" placeholder="New playlist name" />
+        </div>
+        <p class="hint">Anything already in the playlist is skipped.</p>
+    </fieldset>
+
+    <input type="hidden" id="dest-playlist-id" name="destination_playlist_id" />
+    <input type="hidden" id="dest-playlist-name" name="destination_playlist_name" />
+
+    <p class="warning" id="apply-error" style="display: none"></p>
+
+    <p style="margin-top: 1.5rem">
+        <button class="button" type="submit" id="apply-btn">Apply</button>
+        <a class="button secondary" href="{{ url_for('find_more_picker') }}">Back</a>
+    </p>
+</form>
+
+<details style="margin-top: 1.5rem">
+    <summary class="hint">How these were picked</summary>
+    <ul class="run-notes hint">
+        <li>{{ result.candidate_count }} artists are similar to the playlist's artists on Last.fm or ListenBrainz.</li>
+        <li>
+            {% if result.include_known %}
+            {{ result.known_count }} of them (counting the playlist's own artists) you already know, so only songs you haven't heard were looked at
+            {%- else %}
+            {{ result.skipped.in_library }} of them are already in Liked Songs or {% if result.heard_playlists %}{{ result.heard_playlists | join(', ') }}{% else %}your playlists{% endif %}
+            {%- if result.skipped.scrobbled %}, {{ result.skipped.scrobbled }} more you've scrobbled {{ result.scrobbles_to_exclude }}+ times{% endif %}
+            {%- endif %}
+            {%- if result.skipped.blocked %}, and {{ result.skipped.blocked }} you've marked never to suggest{% endif %}.
+        </li>
+        {% if not result.scrobbles_checked %}
+        <li>
+            Your Last.fm listening history hasn't been downloaded yet, so artists you've
+            listened to but haven't added anywhere weren't left out. Running Forgotten
+            Favourites once downloads it.
+        </li>
+        {% endif %}
+        <li>
+            The best {{ result.checked }} of the rest were checked on Spotify until {{ target_artists }} qualified:
+            {{ result.skipped.no_recent }} had nothing new {% if result.years %}in the last {{ result.years }} year{{ 's' if result.years != 1 else '' }}{% else %}at all{% endif %}
+            {%- if result.skipped.over_cap %}, {{ result.skipped.over_cap }} had more listeners than your limit{% endif %}
+            {%- if result.skipped.not_on_spotify %}, {{ result.skipped.not_on_spotify }} couldn't be found on Spotify{% endif %}.
+        </li>
+        <li>Live albums, remasters, deluxe editions and new versions of an artist's older songs don't count as new.</li>
+        {% if result.seeds_without_mbid %}
+        <li>{{ result.seeds_without_mbid }} of the playlist's artists have no MusicBrainz ID on Last.fm, so ListenBrainz couldn't be asked about them.</li>
+        {% endif %}
+    </ul>
+</details>
+
+<script src="{{ url_for('static', filename='playlist_picker.js') }}"></script>
+<script>
+    const MODE = {{ result.mode | tojson }};
+    const form = document.getElementById("apply-form");
+    const rows = [...document.querySelectorAll(".item-row")];
+
+    function addCheck(row) { return row.querySelector(".add-check"); }
+    function snoozeCheck(row) { return row.querySelector(".snooze-check"); }
+    function isBlocked(artistKey) {
+        return [...document.querySelectorAll(`.block-check[data-artist="${CSS.escape(artistKey)}"]`)].some((c) => c.checked);
+    }
+
+    // A row can't be both added and snoozed, and nothing by a never-suggest
+    // artist can be added or snoozed.
+    function syncRow(row) {
+        const blocked = isBlocked(row.dataset.artist);
+        const add = addCheck(row);
+        const snooze = snoozeCheck(row);
+        row.classList.toggle("blocked", blocked);
+        if (blocked) {
+            add.checked = false;
+            snooze.checked = false;
+        } else if (snooze.checked) {
+            add.checked = false;
+        }
+        add.disabled = blocked || snooze.checked;
+        snooze.disabled = blocked;
+        const card = row.closest(".artist-card");
+        if (card) card.classList.toggle("blocked", blocked);
+    }
+
+    function updateSelectAll() {
+        const selectAll = document.getElementById("select-all");
+        const enabled = rows.map(addCheck).filter((c) => !c.disabled);
+        const checked = enabled.filter((c) => c.checked).length;
+        selectAll.checked = enabled.length > 0 && checked === enabled.length;
+        selectAll.indeterminate = checked > 0 && checked < enabled.length;
+    }
+
+    rows.forEach((row) => {
+        addCheck(row).addEventListener("change", updateSelectAll);
+        snoozeCheck(row).addEventListener("change", () => {
+            syncRow(row);
+            updateSelectAll();
+        });
+    });
+    document.querySelectorAll(".block-check").forEach((check) => {
+        check.addEventListener("change", () => {
+            rows.filter((r) => r.dataset.artist === check.dataset.artist).forEach(syncRow);
+            updateSelectAll();
+        });
+    });
+    document.getElementById("select-all").addEventListener("change", (e) => {
+        rows.map(addCheck).filter((c) => !c.disabled).forEach((c) => (c.checked = e.target.checked));
+        updateSelectAll();
+    });
+    rows.forEach(syncRow);
+    updateSelectAll();
+
+    // ▶ opens an embed under the row (or inside the card); one at a time.
+    function closePreviews() {
+        document.querySelectorAll(".preview-row, .card-tracks .preview-embed").forEach((el) => el.remove());
+        document.querySelectorAll(".preview-btn").forEach((b) => {
+            b.textContent = "▶";
+            b.title = "Preview";
+        });
+    }
+    document.querySelectorAll(".preview-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            const open = btn.textContent === "■";
+            closePreviews();
+            if (open) return;
+            const kind = btn.dataset.kind;
+            const id = btn.dataset.uri.split(":").pop();
+            const iframe = document.createElement("iframe");
+            iframe.className = "preview-embed" + (kind === "album" ? " album" : "");
+            iframe.src = `https://open.spotify.com/embed/${kind}/${encodeURIComponent(id)}?utm_source=generator&theme=0`;
+            iframe.allow = "autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture";
+            iframe.loading = "lazy";
+            const row = btn.closest(".item-row");
+            if (row.tagName === "TR") {
+                const previewRow = document.createElement("tr");
+                previewRow.className = "preview-row";
+                const td = document.createElement("td");
+                td.colSpan = row.children.length;
+                td.appendChild(iframe);
+                previewRow.appendChild(td);
+                row.after(previewRow);
+            } else {
+                row.appendChild(iframe);
+            }
+            btn.textContent = "■";
+            btn.title = "Hide preview";
+        });
+    });
+
+    let destCombo = null;
+    (async () => {
+        try {
+            await fetchPlaylists("{{ url_for('api_playlists') }}", "{{ url_for('login') }}");
+        } catch (e) {
+            // Combo will just show no matches; "a new playlist" still works.
+        }
+        destCombo = setupCombo(
+            document.getElementById("dest-combo-input"),
+            document.getElementById("dest-combo-panel"),
+            null,
+        );
+    })();
+
+    document.querySelectorAll('input[name="destination_mode"]').forEach((radio) => {
+        radio.addEventListener("change", () => {
+            const mode = document.querySelector('input[name="destination_mode"]:checked').value;
+            document.getElementById("dest-existing").style.display = mode === "existing" ? "block" : "none";
+            document.getElementById("dest-new").style.display = mode === "new" ? "block" : "none";
+        });
+    });
+
+    form.addEventListener("submit", (e) => {
+        const errorEl = document.getElementById("apply-error");
+        const adding = rows.some((r) => addCheck(r).checked && !addCheck(r).disabled);
+        const snoozing = rows.some((r) => snoozeCheck(r).checked);
+        const blocking = [...document.querySelectorAll(".block-check")].some((c) => c.checked);
+        const fail = (message) => {
+            e.preventDefault();
+            errorEl.textContent = message;
+            errorEl.style.display = "block";
+        };
+        if (!adding && !snoozing && !blocking) {
+            return fail(`Tick something to add, snooze, or never suggest.`);
+        }
+        if (adding) {
+            const mode = document.querySelector('input[name="destination_mode"]:checked').value;
+            if (mode === "existing") {
+                const dest = destCombo ? destCombo.getValue() : { id: null, name: null };
+                if (!dest.id) return fail("Pick a playlist to add to.");
+                document.getElementById("dest-playlist-id").value = dest.id;
+                document.getElementById("dest-playlist-name").value = dest.name;
+            } else if (!document.getElementById("dest-new-name").value.trim()) {
+                return fail("Enter a name for the new playlist.");
+            }
+        }
+        errorEl.style.display = "none";
+    });
+</script>
+{% endif %} {% endblock %}

@@ -132,17 +132,42 @@ def _fetch_playlist_tracks(
     return tracks
 
 
+def listing_info(playlist: dict) -> dict:
+    """{"name", "snapshot_id", "total"} from a playlist in a listing such as
+    sp.current_user_playlists() - everything get_playlist needs to decide
+    whether its cached copy is current, without asking Spotify again."""
+    counts = playlist.get("tracks") or playlist.get("items") or {}
+    return {
+        "name": playlist["name"],
+        "snapshot_id": playlist["snapshot_id"],
+        "total": counts.get("total") or 0,
+    }
+
+
 def get_playlist(
-    sp: Spotify, playlist_id: str, cancel_check: CancelCheck | None = None
+    sp: Spotify,
+    playlist_id: str,
+    cancel_check: CancelCheck | None = None,
+    known: dict | None = None,
 ) -> dict:
     """Returns {"name", "tracks"} for a playlist - the one fetch path every
     tool (standalone or cascade) should go through. Uses the on-disk cache
     when the playlist's snapshot_id (Spotify's change-token for its track
     list) still matches what's cached; otherwise pages through the
-    playlist fresh and updates the cache."""
-    info = sp.playlist(playlist_id, fields="name,snapshot_id,tracks.total")
-    name, snapshot_id = info["name"], info["snapshot_id"]
-    total = (info.get("tracks") or {}).get("total") or 0
+    playlist fresh and updates the cache.
+
+    known, if given, is the playlist's listing_info() from a listing the
+    caller just fetched - it saves the one request per playlist that
+    checking the snapshot_id otherwise costs."""
+    info = known or {}
+    if not info:
+        fetched = sp.playlist(playlist_id, fields="name,snapshot_id,tracks.total")
+        info = {
+            "name": fetched["name"],
+            "snapshot_id": fetched["snapshot_id"],
+            "total": (fetched.get("tracks") or {}).get("total") or 0,
+        }
+    name, snapshot_id, total = info["name"], info["snapshot_id"], info["total"]
     tracks = _load_cached_tracks(playlist_id, snapshot_id)
     if tracks is not None:
         logger.info(
@@ -164,22 +189,28 @@ MAX_CONCURRENT_FETCHES = 5
 
 
 def get_playlists(
-    sp: Spotify, playlist_ids, cancel_check: CancelCheck | None = None
+    sp: Spotify,
+    playlist_ids,
+    cancel_check: CancelCheck | None = None,
+    known: dict[str, dict] | None = None,
 ) -> dict[str, dict]:
     """Fetches multiple playlists concurrently - same caching behavior as
     get_playlist for each, just spread across a small thread pool so a
     multi-playlist scan's wall-clock time isn't the sum of each playlist's
-    fetch time. Returns {playlist_id: {"name", "tracks"}}."""
+    fetch time. known maps playlist ids to listing_info() (see
+    get_playlist). Returns {playlist_id: {"name", "tracks"}}."""
     playlist_ids = list(dict.fromkeys(playlist_ids))
+    known = known or {}
     if not playlist_ids:
         return {}
     if len(playlist_ids) == 1:
-        return {playlist_ids[0]: get_playlist(sp, playlist_ids[0], cancel_check)}
+        pid = playlist_ids[0]
+        return {pid: get_playlist(sp, pid, cancel_check, known.get(pid))}
 
     results: dict[str, dict] = {}
     with ThreadPoolExecutor(max_workers=min(MAX_CONCURRENT_FETCHES, len(playlist_ids))) as pool:
         future_to_id = {
-            pool.submit(get_playlist, sp, playlist_id, cancel_check): playlist_id
+            pool.submit(get_playlist, sp, playlist_id, cancel_check, known.get(playlist_id)): playlist_id
             for playlist_id in playlist_ids
         }
         for future in as_completed(future_to_id):

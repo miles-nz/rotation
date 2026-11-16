@@ -81,6 +81,32 @@ functions. Currently available:
   listed separately. The first run downloads your full Last.fm listening
   history (see Listening history below), which takes about 20 minutes.
   Requires Last.fm to be configured (see Setup).
+- **Find More Like This** - recent music by artists similar to the ones
+  in one or more playlists. Similar artists come from Last.fm and
+  ListenBrainz (what people listen to together) rather than Spotify's own
+  recommendations, and are ranked by how many of the playlist's artists
+  they're similar to, and how closely. Artists already in Liked Songs or your
+  Ranking Check playlists (every playlist if you haven't saved those), or
+  that you've scrobbled 3 or more times, are left out. The scrobble check uses your downloaded listening history (see
+  Listening history below); it's skipped until another tool has downloaded
+  it, rather than starting the 20-minute download itself. Show tracks (a few from each
+  artist's recent releases, most played on Last.fm first), albums and EPs,
+  or artists with sample tracks; limit it to releases from the last few
+  years (3 by default) and, optionally, to artists with at most a given
+  number of Last.fm listeners so big names don't crowd out smaller ones.
+  Optionally, also suggest songs you haven't heard by artists you already
+  know - the playlist's own artists and similar ones in your library or
+  listening history - ranked in with the new artists (taking at most half
+  the places, and without the listener limit). A song counts as heard if
+  it's in Liked Songs or your Ranking Check playlists (every playlist if
+  you haven't saved those), or you've scrobbled it 3 or more times. Live albums, remasters, deluxe and anniversary editions,
+  archive releases (takes, demos, rehearsals), compilations of older songs
+  and new versions of older songs don't count as new. Each suggestion says which of the playlist's artists
+  it's similar to and the Last.fm tags it shares with the playlist. Add
+  what you want to an existing or new playlist, snooze a suggestion for 30
+  days, or never suggest an artist again (both can be undone on the page).
+  Requires Last.fm to be configured (see Setup); ListenBrainz needs no
+  setup.
 - **Old Songs on Repeat** - the songs you've played most in a year (the
   current one by default) that were released before it. Pick the year, how
   many songs to show (top 50 by default) and, optionally, a minimum play
@@ -209,8 +235,8 @@ functions. Currently available:
     blank for now - the first time you log in, the app shows your Spotify
     user ID and tells you to set it, then restart and log in again.
 
-    Optionally, to enable Most Played, Forgotten Favourites, Old Songs on Repeat, Ranking Check
-    and Album Swap's album suggestions, also fill in `LASTFM_API_KEY` and `LASTFM_USERNAME` -
+    Optionally, to enable Most Played, Forgotten Favourites, Find More Like This, Old Songs on
+    Repeat, Ranking Check and Album Swap's album suggestions, also fill in `LASTFM_API_KEY` and `LASTFM_USERNAME` -
     get a free API key
     at https://www.last.fm/api/account/create. Everything else works
     without them.

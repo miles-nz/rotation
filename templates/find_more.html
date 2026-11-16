@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+{% block title %}Find More Like This - Rotation{% endblock %}
+{% block extra_style %}
+.number-input { width: 7rem; }
+.mode-option { display: block; margin: 0.4rem 0; }
+.mode-option .hint { display: block; margin: 0.1rem 0 0 1.5rem; }
+.hidden-list li { margin: 0.35rem 0; }
+{% endblock %}
+{% block content %}
+<h1>Find More Like This</h1>
+<p>
+    Find recent music by artists similar to the ones in a playlist. Similar
+    artists come from Last.fm and ListenBrainz - what people actually listen
+    to together - rather than from Spotify. Artists already in Liked Songs
+    or {% if heard_playlists %}your Ranking Check playlists
+    ({{ heard_playlists | map(attribute='name') | join(', ') }} - change them
+    on Ranking Check){% else %}your playlists{% endif %}, or that you've
+    scrobbled a few times, are left out.
+</p>
+
+{% if needs_credentials %}
+<p class="warning">
+    No Spotify credentials found. Copy <code>.env.example</code> to
+    <code>.env</code> and fill in <code>SPOTIFY_CLIENT_ID</code> and
+    <code>SPOTIFY_CLIENT_SECRET</code>, then restart the app. See the README for
+    how to register a Spotify app.
+</p>
+{% elif needs_lastfm %}
+<p class="warning">
+    Find More Like This needs Last.fm. Copy <code>.env.example</code> to
+    <code>.env</code> and fill in <code>LASTFM_API_KEY</code> and
+    <code>LASTFM_USERNAME</code>, then restart the app. See the README for
+    how to get a free Last.fm API key.
+</p>
+{% elif not logged_in %}
+<p><a class="button" href="{{ url_for('login') }}">Log in with Spotify</a></p>
+{% else %}
+<form method="get" action="{{ url_for('find_more_scan') }}" id="picker-form">
+    <fieldset>
+        <legend>Find more like</legend>
+        <div id="source-combo-list"></div>
+        <p>
+            <button class="button secondary" id="add-source-btn" type="button">
+                + Add another playlist
+            </button>
+        </p>
+    </fieldset>
+
+    <fieldset>
+        <legend>Show</legend>
+        <label class="mode-option">
+            <input type="radio" name="mode" value="tracks" checked /> Tracks
+            <span class="hint">A few tracks from each suggested artist's recent releases, most played on Last.fm first.</span>
+        </label>
+        <label class="mode-option">
+            <input type="radio" name="mode" value="albums" /> Albums
+            <span class="hint">Each suggested artist's recent albums and EPs. Adding one adds all of its tracks.</span>
+        </label>
+        <label class="mode-option">
+            <input type="radio" name="mode" value="artists" /> Artists
+            <span class="hint">Each suggested artist with a few sample tracks to pick from.</span>
+        </label>
+    </fieldset>
+
+    <fieldset>
+        <legend>Artists you already know</legend>
+        <label>
+            <input type="checkbox" name="include_known" value="1" />
+            Also suggest songs I haven't heard by artists I already know
+        </label>
+        <p class="hint">
+            The playlist's own artists, and similar ones you already have or
+            listen to, ranked in with the new ones. A song counts as heard if it's
+            in Liked Songs or {% if heard_playlists %}your Ranking Check playlists{% else %}your playlists{% endif %},
+            or you've scrobbled it {{ scrobbles_to_exclude }} or more times.
+        </p>
+    </fieldset>
+
+    <fieldset>
+        <legend>Released in the last</legend>
+        <input class="number-input" type="number" name="years" id="years" min="1" value="{{ default_years }}" />
+        years
+        <p class="hint">Clear it to include releases of any age.</p>
+    </fieldset>
+
+    <fieldset>
+        <legend>At most</legend>
+        <input class="number-input" type="number" name="max_listeners" id="max-listeners" min="1" placeholder="No limit" />
+        Last.fm listeners
+        <p class="hint">
+            Leaves out artists with more listeners than this, so big names don't
+            crowd out smaller ones. For a sense of scale, an artist with 100,000
+            Last.fm listeners is well known within a scene; one with 2 million is
+            mainstream. Leave it blank for no limit. Doesn't apply to artists you
+            already know.
+        </p>
+    </fieldset>
+
+    <p id="picker-loading"><span class="spinner"></span>Loading playlists…</p>
+    <p class="warning" id="picker-error" style="display: none"></p>
+    <p>
+        <button class="button" type="submit" id="submit-btn" disabled>Find more</button>
+    </p>
+</form>
+
+{% if snoozes %}
+<h2>Snoozed suggestions</h2>
+<p class="hint">These won't be suggested again until the date shown.</p>
+<ul class="hidden-list">
+    {% for s in snoozes %}
+    <li>
+        {{ s.artists }} – {{ s.name }}
+        <span class="track-meta">until {{ s.until[:10] }}</span>
+        <form method="post" action="{{ url_for('find_more_unsnooze') }}" style="display: inline">
+            <input type="hidden" name="uri" value="{{ s.uri }}" />
+            <button class="button secondary" type="submit">Un-snooze</button>
+        </form>
+    </li>
+    {% endfor %}
+</ul>
+{% endif %}
+
+{% if blocked %}
+<h2>Never suggested</h2>
+<p class="hint">These artists are left out of every run.</p>
+<ul class="hidden-list">
+    {% for b in blocked %}
+    <li>
+        {{ b.name }}
+        <form method="post" action="{{ url_for('find_more_unblock') }}" style="display: inline">
+            <input type="hidden" name="key" value="{{ b.key }}" />
+            <button class="button secondary" type="submit">Allow again</button>
+        </form>
+    </li>
+    {% endfor %}
+</ul>
+{% endif %}
+
+<script src="{{ url_for('static', filename='playlist_picker.js') }}"></script>
+<script>
+    const sourceRows = createComboRowManager(document.getElementById("source-combo-list"), 1);
+
+    document.getElementById("add-source-btn").addEventListener("click", () => sourceRows.addRow(null));
+
+    (async () => {
+        const errorEl = document.getElementById("picker-error");
+        try {
+            await fetchPlaylists("{{ url_for('api_playlists') }}", "{{ url_for('login') }}");
+        } catch (e) {
+            errorEl.textContent = "Failed to load your playlists. Check your connection and try again.";
+            errorEl.style.display = "block";
+        }
+        document.getElementById("picker-loading").style.display = "none";
+        sourceRows.reset([null]);
+        document.getElementById("submit-btn").disabled = false;
+    })();
+
+    document.getElementById("picker-form").addEventListener("submit", (e) => {
+        const form = e.target;
+        const errorEl = document.getElementById("picker-error");
+        const sources = sourceRows.getValues();
+        let error = null;
+        if (!sources.length || sources.some((p) => !p.id)) {
+            error = "Pick a playlist for every row (or remove empty ones).";
+        } else if (new Set(sources.map((p) => p.id)).size !== sources.length) {
+            error = "Each playlist can only be picked once.";
+        }
+        if (error) {
+            e.preventDefault();
+            errorEl.textContent = error;
+            errorEl.style.display = "block";
+            return;
+        }
+        errorEl.style.display = "none";
+
+        form.querySelectorAll("input[data-generated]").forEach((el) => el.remove());
+        sources.forEach((p) => {
+            const input = document.createElement("input");
+            input.type = "hidden";
+            input.name = "playlist_id";
+            input.value = p.id;
+            input.dataset.generated = "1";
+            form.appendChild(input);
+        });
+        // A blank optional field is left out of the URL rather than sent empty.
+        ["years", "max-listeners"].forEach((id) => {
+            const el = document.getElementById(id);
+            el.disabled = !el.value.trim();
+        });
+    });
+    // Coming back to this page from the results re-enables them.
+    window.addEventListener("pageshow", () => {
+        ["years", "max-listeners"].forEach((id) => (document.getElementById(id).disabled = false));
+    });
+</script>
+{% endif %} {% endblock %}
