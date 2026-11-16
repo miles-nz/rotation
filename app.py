@@ -2510,7 +2510,6 @@ def find_more_picker():
         needs_lastfm=not _lastfm_configured(),
         logged_in=sp is not None,
         default_years=find_more_module.DEFAULT_YEARS,
-        scrobbles_to_exclude=find_more_module.SCROBBLES_TO_EXCLUDE,
         heard_playlists=_find_more_heard_playlists(sp) if sp is not None else None,
         snoozes=find_more_hidden_module.list_snoozes() if sp is not None else [],
         blocked=find_more_hidden_module.list_blocked() if sp is not None else [],

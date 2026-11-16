@@ -99,7 +99,7 @@ functions. Currently available:
   listening history - ranked in with the new artists (taking at most half
   the places, and without the listener limit). A song counts as heard if
   it's in Liked Songs or your Ranking Check playlists (every playlist if
-  you haven't saved those), or you've scrobbled it 3 or more times. Live albums, remasters, deluxe and anniversary editions,
+  you haven't saved those), or you've ever scrobbled it. Live albums, remasters, deluxe and anniversary editions,
   archive releases (takes, demos, rehearsals), compilations of older songs
   and new versions of older songs don't count as new. Each suggestion says which of the playlist's artists
   it's similar to and the Last.fm tags it shares with the playlist. Add

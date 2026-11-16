@@ -58,6 +58,9 @@ MAX_CANDIDATES_CHECKED = 250
 # something you've come across. Songs too, for "more from artists you know":
 # one you've played this often counts as heard.
 SCROBBLES_TO_EXCLUDE = 3
+# A song only needs one play to count as heard - a new release has usually
+# only been played once or twice, unlike an artist you actually know.
+SONG_SCROBBLES_HEARD = 1
 
 TRACKS_PER_ARTIST = 3
 SAMPLE_TRACKS_PER_ARTIST = 3
@@ -821,7 +824,7 @@ def find_more_like_this(
     artists you already know (the playlist's own artists, and similar ones
     in your library or listening history), ranked in with the rest. A song
     counts as heard if it's in Liked Songs or heard_playlist_ids (every
-    playlist if None), or scrobbled SCROBBLES_TO_EXCLUDE+ times. Returns a
+    playlist if None), or scrobbled SONG_SCROBBLES_HEARD+ times. Returns a
     dict with "artists" (best first, each with
     "tracks" or "albums" depending on mode) and what's needed to explain
     the run: the source playlists, how many seeds were used, the
@@ -854,13 +857,13 @@ def find_more_like_this(
         snoozed = find_more_hidden.snoozed_uris()
 
         # Songs you count as heard, per artist: anything in Liked Songs or
-        # the heard playlists, or scrobbled SCROBBLES_TO_EXCLUDE+ times in any version.
+        # the heard playlists, or scrobbled SONG_SCROBBLES_HEARD+ times in any version.
         heard_by_artist: dict[str, set[str]] = {}
         if include_known:
             for artist, title in library_songs:
                 heard_by_artist.setdefault(artist, set()).add(title)
             for (artist, title), count in (history["songs"] if history else {}).items():
-                if count >= SCROBBLES_TO_EXCLUDE:
+                if count >= SONG_SCROBBLES_HEARD:
                     heard_by_artist.setdefault(artist, set()).add(title)
 
         skipped = {
