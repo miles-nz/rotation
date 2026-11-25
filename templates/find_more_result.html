@@ -295,7 +295,8 @@ tr.blocked td:not(:last-child), .artist-card.blocked .card-body { opacity: 0.45;
             The best {{ result.checked }} of the rest were checked on Spotify until {{ target_artists }} qualified:
             {{ result.skipped.no_recent }} had nothing new {% if result.years %}in the last {{ result.years }} year{{ 's' if result.years != 1 else '' }}{% else %}at all{% endif %}
             {%- if result.skipped.over_cap %}, {{ result.skipped.over_cap }} had more listeners than your limit{% endif %}
-            {%- if result.skipped.not_on_spotify %}, {{ result.skipped.not_on_spotify }} couldn't be found on Spotify{% endif %}.
+            {%- if result.skipped.not_on_spotify %}, {{ result.skipped.not_on_spotify }} couldn't be found on Spotify{% endif %}
+            {%- if result.skipped.errored %}, {{ result.skipped.errored }} couldn't be checked because of an error (Spotify may have been rate-limiting; try again later){% endif %}.
         </li>
         <li>Live albums, remasters, deluxe editions and new versions of an artist's older songs don't count as new.</li>
         {% if result.seeds_without_mbid %}

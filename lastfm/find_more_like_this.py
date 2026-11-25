@@ -21,6 +21,7 @@ import lastfm.scrobble_history as scrobble_history
 import listenbrainz.listenbrainz_client as listenbrainz_client
 import playlists.playlist_cache as playlist_cache
 import playlists.playlist_filter as playlist_filter
+import spotify.rate_limit as spotify_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,7 @@ RELEASES_TTL_DAYS = 3
 
 _LASTFM_WORKERS = 4
 _LISTENBRAINZ_WORKERS = 3
-_CANDIDATE_WORKERS = 6
+_CANDIDATE_WORKERS = 4
 # Give up on ListenBrainz for the rest of a run after this many failures in
 # a row, rather than waiting out every retry for every seed while it's down.
 _LISTENBRAINZ_MAX_FAILURES = 3
@@ -868,6 +869,7 @@ def find_more_like_this(
 
         skipped = {
             "in_library": 0, "scrobbled": 0, "blocked": 0, "over_cap": 0, "not_on_spotify": 0, "no_recent": 0,
+            "errored": 0,
         }
         known_count = 0
         pool_candidates = []
@@ -896,6 +898,8 @@ def find_more_like_this(
         checked = 0
         to_check = pool_candidates[:MAX_CANDIDATES_CHECKED]
         batch_size = _CANDIDATE_WORKERS * 2
+        # Spotify answers a burst of lookups with 429s; this waits them out.
+        candidate_sp = spotify_rate_limit.throttled(sp, cancel_check)
         _report("candidates", "Checking similar artists for recent releases", 0, len(to_check))
         with ThreadPoolExecutor(max_workers=_CANDIDATE_WORKERS) as pool:
             for start in range(0, len(to_check), batch_size):
@@ -905,7 +909,7 @@ def find_more_like_this(
                 futures = [
                     pool.submit(
                         _check_candidate,
-                        sp,
+                        candidate_sp,
                         caches,
                         c,
                         mode,
@@ -924,7 +928,7 @@ def find_more_like_this(
                         reason, result = future.result()
                     except Exception:
                         logger.warning("couldn't check %r, skipping it", candidate["name"], exc_info=True)
-                        reason, result = "not_on_spotify", None
+                        reason, result = "errored", None
                     checked += 1
                     if reason != "ok":
                         skipped[reason] += 1
